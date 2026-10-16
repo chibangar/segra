@@ -195,6 +195,7 @@ namespace Segra.Backend.Windows.Display
             private int _ticks = 0;
             private const int TotalTicks = 140; // ~3.5 seconds at 25ms per tick
 
+            private float _scale = 1.0f;
             private string _title = "";
             private string _subtitle = "";
             private InGameNotificationType _type;
@@ -207,26 +208,14 @@ namespace Segra.Backend.Windows.Display
                 ShowInTaskbar = false;
                 TopMost = true;
                 DoubleBuffered = true;
-                Size = new Size(340, 76);
                 BackColor = Color.FromArgb(15, 23, 42); // Slate-900 / dark theme
                 Opacity = 0.0;
 
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
-                try
-                {
-                    using var ico = Properties.Resources.icon;
-                    if (ico != null)
-                    {
-                        _logoBitmap = new Bitmap(ico.ToBitmap(), new Size(38, 38));
-                    }
-                }
-                catch
-                {
-                    _logoBitmap = null;
-                }
-
-                PositionAtTopRight();
+                ApplyConfiguredSize();
+                LoadLogo();
+                UpdatePosition();
 
                 _animTimer = new System.Windows.Forms.Timer { Interval = 25 };
                 _animTimer.Tick += OnAnimTick;
@@ -244,13 +233,87 @@ namespace Segra.Backend.Windows.Display
                 }
             }
 
+            private void ApplyConfiguredSize()
+            {
+                var sizeSetting = Settings.Instance.InGameNotificationSize;
+                _scale = sizeSetting switch
+                {
+                    InGameNotificationSize.Small => 0.8f,
+                    InGameNotificationSize.Large => 1.25f,
+                    _ => 1.0f
+                };
+
+                int width = (int)Math.Round(340 * _scale);
+                int height = (int)Math.Round(76 * _scale);
+                Size = new Size(width, height);
+            }
+
+            private void LoadLogo()
+            {
+                try
+                {
+                    using var ico = Properties.Resources.icon;
+                    if (ico != null)
+                    {
+                        int iconDim = (int)Math.Round(38 * _scale);
+                        _logoBitmap?.Dispose();
+                        _logoBitmap = new Bitmap(ico.ToBitmap(), new Size(iconDim, iconDim));
+                    }
+                }
+                catch
+                {
+                    _logoBitmap = null;
+                }
+            }
+
+            public void UpdatePosition()
+            {
+                try
+                {
+                    var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+                    int padX = 24;
+                    int padY = 24;
+
+                    int x, y;
+                    switch (Settings.Instance.InGameNotificationPosition)
+                    {
+                        case InGameNotificationPosition.TopLeft:
+                            x = screen.Left + padX;
+                            y = screen.Top + padY;
+                            break;
+                        case InGameNotificationPosition.BottomLeft:
+                            x = screen.Left + padX;
+                            y = screen.Bottom - Height - padY;
+                            break;
+                        case InGameNotificationPosition.BottomRight:
+                            x = screen.Right - Width - padX;
+                            y = screen.Bottom - Height - padY;
+                            break;
+                        case InGameNotificationPosition.TopRight:
+                        default:
+                            x = screen.Right - Width - padX;
+                            y = screen.Top + padY;
+                            break;
+                    }
+
+                    Location = new Point(x, y);
+                }
+                catch
+                {
+                    Location = new Point(1920 - Width - 24, 24);
+                }
+            }
+
             public void ShowData(string title, string subtitle, InGameNotificationType type)
             {
+                ApplyConfiguredSize();
+                LoadLogo();
+                UpdatePosition();
+
                 _title = title;
                 _subtitle = subtitle;
                 _type = type;
                 _ticks = 0;
-                PositionAtTopRight();
 
                 if (_animTimer != null && !_animTimer.Enabled)
                 {
@@ -258,19 +321,6 @@ namespace Segra.Backend.Windows.Display
                 }
 
                 Invalidate();
-            }
-
-            private void PositionAtTopRight()
-            {
-                try
-                {
-                    var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
-                    Location = new Point(screen.Right - Width - 24, screen.Top + 24);
-                }
-                catch
-                {
-                    Location = new Point(1920 - Width - 24, 24);
-                }
             }
 
             private void OnAnimTick(object? sender, EventArgs e)
@@ -323,59 +373,62 @@ namespace Segra.Backend.Windows.Display
                 };
 
                 var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+                int radius = (int)Math.Round(10 * _scale);
 
                 // Background
                 using (var bgBrush = new SolidBrush(Color.FromArgb(24, 30, 42)))
-                using (var bgPath = GetRoundedPath(rect, 10))
+                using (var bgPath = GetRoundedPath(rect, radius))
                 {
                     g.FillPath(bgBrush, bgPath);
                 }
 
                 // Glowing border
-                using (var borderPen = new Pen(accentColor, 1.75f))
-                using (var borderPath = GetRoundedPath(rect, 10))
+                using (var borderPen = new Pen(accentColor, Math.Max(1.5f, 1.75f * _scale)))
+                using (var borderPath = GetRoundedPath(rect, radius))
                 {
                     g.DrawPath(borderPen, borderPath);
                 }
 
                 // App Logo on the left
-                int iconX = 16;
-                int iconY = 18;
+                int iconX = (int)Math.Round(16 * _scale);
+                int iconY = (int)Math.Round(18 * _scale);
+                int iconDim = (int)Math.Round(38 * _scale);
                 if (_logoBitmap != null)
                 {
-                    g.DrawImage(_logoBitmap, iconX, iconY, 38, 38);
+                    g.DrawImage(_logoBitmap, iconX, iconY, iconDim, iconDim);
                 }
                 else
                 {
                     // Fallback icon placeholder
                     using var badgeBrush = new SolidBrush(accentColor);
-                    g.FillEllipse(badgeBrush, iconX, iconY, 36, 36);
+                    g.FillEllipse(badgeBrush, iconX, iconY, iconDim, iconDim);
                 }
 
                 // Status indicator pill / dot next to title
-                int textX = iconX + 48;
-                int dotY = 22;
+                int textX = iconX + iconDim + (int)Math.Round(10 * _scale);
+                int dotY = (int)Math.Round(21 * _scale);
+                int dotDim = (int)Math.Round(7 * _scale);
                 using (var dotBrush = new SolidBrush(accentColor))
                 {
-                    g.FillEllipse(dotBrush, textX, dotY, 7, 7);
+                    g.FillEllipse(dotBrush, textX, dotY, dotDim, dotDim);
                 }
 
                 // Title
-                using (var titleFont = new Font("Segoe UI", 9.5f, FontStyle.Bold))
+                using (var titleFont = new Font("Segoe UI", 9.5f * _scale, FontStyle.Bold))
                 using (var titleBrush = new SolidBrush(Color.White))
                 {
-                    g.DrawString(_title, titleFont, titleBrush, new PointF(textX + 12, 16));
+                    g.DrawString(_title, titleFont, titleBrush, new PointF(textX + (int)Math.Round(12 * _scale), (int)Math.Round(15 * _scale)));
                 }
 
                 // Subtitle (Game Name)
-                using (var subFont = new Font("Segoe UI", 8.5f, FontStyle.Regular))
+                using (var subFont = new Font("Segoe UI", 8.5f * _scale, FontStyle.Regular))
                 using (var subBrush = new SolidBrush(Color.FromArgb(148, 163, 184)))
                 {
-                    g.DrawString(_subtitle, subFont, subBrush, new PointF(textX + 12, 38));
+                    g.DrawString(_subtitle, subFont, subBrush, new PointF(textX + (int)Math.Round(12 * _scale), (int)Math.Round(37 * _scale)));
                 }
 
                 // Bottom progress / duration bar
-                int barHeight = 3;
+                int barHeight = Math.Max(2, (int)Math.Round(3 * _scale));
                 int barY = Height - barHeight - 2;
                 int barWidth = (int)((Width - 20) * (1f - _progress));
                 if (barWidth > 0)

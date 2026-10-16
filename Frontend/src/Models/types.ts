@@ -258,6 +258,8 @@ export type CpuClipPreset =
   | 'veryslow';
 export type NvidiaClipPreset = 'slow' | 'medium' | 'fast';
 export type Av1NvencPreset = 'p1' | 'p2' | 'p3' | 'p4' | 'p5' | 'p6' | 'p7';
+export type InGameNotificationPosition = 'TopRight' | 'TopLeft' | 'BottomRight' | 'BottomLeft';
+export type InGameNotificationSize = 'Small' | 'Medium' | 'Large';
 export type AmdClipPreset = 'quality' | 'transcoding' | 'lowlatency' | 'ultralowlatency';
 export type IntelClipPreset = 'fast' | 'medium' | 'slow';
 export type ClipPreset =
@@ -350,6 +352,8 @@ export interface Settings {
   soundEffectsVolume: number; // Volume for UI sound effects (0.0 to 1.0)
   showNewBadgeOnVideos: boolean;
   showInGameNotifications: boolean;
+  inGameNotificationPosition: InGameNotificationPosition;
+  inGameNotificationSize: InGameNotificationSize;
   showGameBackground: boolean; // Show game background while recording
   showAudioWaveformInTimeline: boolean; // Show audio waveform in video timeline
   enableSeparateAudioTracks: boolean; // Advanced: per-source audio tracks
@@ -440,6 +444,8 @@ export const initialSettings: Settings = {
   soundEffectsVolume: 1,
   showNewBadgeOnVideos: false,
   showInGameNotifications: true,
+  inGameNotificationPosition: 'TopRight',
+  inGameNotificationSize: 'Medium',
   showGameBackground: true,
   showAudioWaveformInTimeline: true,
   enableSeparateAudioTracks: false,

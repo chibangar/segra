@@ -128,6 +128,14 @@ namespace Segra.Backend.App
                         case "CancelDiscordLogin":
                             DiscordLoginService.Cancel();
                             break;
+                        case "TestInGameNotification":
+#if WINDOWS
+                            Windows.Display.InGameNotificationService.ShowKill(
+                                AppState.Instance.Recording?.Game ?? "Counter-Strike 2", 
+                                false
+                            );
+#endif
+                            break;
                         case "CancelClip":
                             if (root.TryGetProperty("Parameters", out var cancelClipParams) &&
                                 cancelClipParams.TryGetProperty("id", out var clipId))

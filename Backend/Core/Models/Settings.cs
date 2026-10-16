@@ -97,6 +97,8 @@ namespace Segra.Backend.Core.Models
         private float _soundEffectsVolume = 0.5f;
         private bool _showNewBadgeOnVideos = false;
         private bool _showInGameNotifications = true;
+        private InGameNotificationPosition _inGameNotificationPosition = InGameNotificationPosition.TopRight;
+        private InGameNotificationSize _inGameNotificationSize = InGameNotificationSize.Medium;
         private string _language = "pt-PT";
         private bool _showGameBackground = true;
         private bool _showAudioWaveformInTimeline = true;
@@ -819,6 +821,32 @@ namespace Segra.Backend.Core.Models
             }
         }
 
+        [JsonPropertyName("inGameNotificationPosition")]
+        public InGameNotificationPosition InGameNotificationPosition
+        {
+            get => _inGameNotificationPosition;
+            set
+            {
+                if (_inGameNotificationPosition != value)
+                {
+                    _inGameNotificationPosition = value;
+                }
+            }
+        }
+
+        [JsonPropertyName("inGameNotificationSize")]
+        public InGameNotificationSize InGameNotificationSize
+        {
+            get => _inGameNotificationSize;
+            set
+            {
+                if (_inGameNotificationSize != value)
+                {
+                    _inGameNotificationSize = value;
+                }
+            }
+        }
+
         [JsonPropertyName("language")]
         public string Language
         {
@@ -1433,6 +1461,23 @@ namespace Segra.Backend.Core.Models
         All,
         GameOnly,
         GameAndDiscord
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter<InGameNotificationPosition>))]
+    public enum InGameNotificationPosition
+    {
+        TopRight,
+        TopLeft,
+        BottomRight,
+        BottomLeft
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter<InGameNotificationSize>))]
+    public enum InGameNotificationSize
+    {
+        Small,
+        Medium,
+        Large
     }
 
     public class Game

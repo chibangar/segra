@@ -317,6 +317,27 @@ namespace Segra.Backend.Core
                 hasChanges = true;
             }
 
+            if (settings.ShowInGameNotifications != updatedSettings.ShowInGameNotifications)
+            {
+                Log.Information($"ShowInGameNotifications changed from '{settings.ShowInGameNotifications}' to '{updatedSettings.ShowInGameNotifications}'");
+                settings.ShowInGameNotifications = updatedSettings.ShowInGameNotifications;
+                hasChanges = true;
+            }
+
+            if (settings.InGameNotificationPosition != updatedSettings.InGameNotificationPosition)
+            {
+                Log.Information($"InGameNotificationPosition changed from '{settings.InGameNotificationPosition}' to '{updatedSettings.InGameNotificationPosition}'");
+                settings.InGameNotificationPosition = updatedSettings.InGameNotificationPosition;
+                hasChanges = true;
+            }
+
+            if (settings.InGameNotificationSize != updatedSettings.InGameNotificationSize)
+            {
+                Log.Information($"InGameNotificationSize changed from '{settings.InGameNotificationSize}' to '{updatedSettings.InGameNotificationSize}'");
+                settings.InGameNotificationSize = updatedSettings.InGameNotificationSize;
+                hasChanges = true;
+            }
+
             if (settings.ShowGameBackground != updatedSettings.ShowGameBackground)
             {
                 Log.Information($"ShowGameBackground changed from '{settings.ShowGameBackground}' to '{updatedSettings.ShowGameBackground}'");

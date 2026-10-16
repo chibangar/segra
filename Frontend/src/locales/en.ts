@@ -109,6 +109,19 @@ export const en = {
       showInGameNotifications: 'In-Game Notifications (Kills & Clips)',
       showInGameNotificationsDesc:
         'Shows an on-screen HUD notification in-game when getting kills, headshots, or saving clips (Medal style).',
+      inGameNotificationPosition: 'On-Screen Position',
+      inGameNotificationPositionDesc:
+        'Choose which corner of the screen the notification appears in during gameplay.',
+      inGameNotificationSize: 'Notification Size',
+      inGameNotificationSizeDesc: 'Choose the scale of the popout.',
+      posTopRight: 'Top Right',
+      posTopLeft: 'Top Left',
+      posBottomRight: 'Bottom Right',
+      posBottomLeft: 'Bottom Left',
+      sizeSmall: 'Small (80%)',
+      sizeMedium: 'Medium (100%)',
+      sizeLarge: 'Large (125%)',
+      testNotification: 'Test Notification',
     },
     captureMode: {
       title: 'Capture Mode',

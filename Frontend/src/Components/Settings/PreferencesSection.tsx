@@ -1,9 +1,16 @@
 import { useState } from 'react';
-import { VolumeX, Volume2 } from 'lucide-react';
+import { VolumeX, Volume2, Play } from 'lucide-react';
 import CloudBadge from '../CloudBadge';
 import DropdownSelect from '../DropdownSelect';
 import RangeSlider from '../RangeSlider';
-import { CloseButtonAction, Settings as SettingsType, StartupWindowMode } from '../../Models/types';
+import {
+  CloseButtonAction,
+  Settings as SettingsType,
+  StartupWindowMode,
+  InGameNotificationPosition,
+  InGameNotificationSize,
+} from '../../Models/types';
+import { sendMessageToBackend } from '../../Utils/MessageUtils';
 import { useAppState } from '../../Context/AppStateContext';
 import { useI18n, Language } from '../../Context/I18nContext';
 
@@ -171,22 +178,84 @@ export default function PreferencesSection({ settings, updateSettings }: Prefere
         <h2 className="text-xl font-semibold mb-4">{t('settings.preferences.interface')}</h2>
         <div className="flex flex-col gap-3">
           {interfaceToggles.map(({ key, label, description }) => (
-            <label
+            <div
               key={key}
-              className="flex items-center gap-3 cursor-pointer p-3 bg-base-200 rounded-lg border border-base-400"
+              className="flex flex-col bg-base-200 rounded-lg border border-base-400 overflow-hidden"
             >
-              <input
-                type="checkbox"
-                name={key}
-                checked={settings[key]}
-                onChange={(e) => updateSettings({ [key]: e.target.checked })}
-                className="checkbox checkbox-primary checkbox-sm"
-              />
-              <div>
-                <div className="flex items-center gap-1 font-semibold">{label}</div>
-                <div className="text-sm opacity-70 mt-0.5">{description}</div>
-              </div>
-            </label>
+              <label className="flex items-center gap-3 cursor-pointer p-3">
+                <input
+                  type="checkbox"
+                  name={key}
+                  checked={settings[key]}
+                  onChange={(e) => updateSettings({ [key]: e.target.checked })}
+                  className="checkbox checkbox-primary checkbox-sm"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-1 font-semibold">{label}</div>
+                  <div className="text-sm opacity-70 mt-0.5">{description}</div>
+                </div>
+              </label>
+
+              {key === 'showInGameNotifications' && settings.showInGameNotifications && (
+                <div className="p-3 pt-2 border-t border-base-400/50 bg-base-300/40 flex flex-col gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="form-control">
+                      <label className="label py-1">
+                        <span className="label-text font-medium text-xs">
+                          {t('settings.preferences.inGameNotificationPosition')}
+                        </span>
+                      </label>
+                      <DropdownSelect
+                        items={[
+                          { value: 'TopRight', label: t('settings.preferences.posTopRight') },
+                          { value: 'TopLeft', label: t('settings.preferences.posTopLeft') },
+                          { value: 'BottomRight', label: t('settings.preferences.posBottomRight') },
+                          { value: 'BottomLeft', label: t('settings.preferences.posBottomLeft') },
+                        ]}
+                        value={settings.inGameNotificationPosition || 'TopRight'}
+                        onChange={(val) =>
+                          updateSettings({
+                            inGameNotificationPosition: val as InGameNotificationPosition,
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div className="form-control">
+                      <label className="label py-1">
+                        <span className="label-text font-medium text-xs">
+                          {t('settings.preferences.inGameNotificationSize')}
+                        </span>
+                      </label>
+                      <DropdownSelect
+                        items={[
+                          { value: 'Small', label: t('settings.preferences.sizeSmall') },
+                          { value: 'Medium', label: t('settings.preferences.sizeMedium') },
+                          { value: 'Large', label: t('settings.preferences.sizeLarge') },
+                        ]}
+                        value={settings.inGameNotificationSize || 'Medium'}
+                        onChange={(val) =>
+                          updateSettings({
+                            inGameNotificationSize: val as InGameNotificationSize,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline btn-primary gap-2"
+                      onClick={() => sendMessageToBackend('TestInGameNotification')}
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      {t('settings.preferences.testNotification')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       </div>

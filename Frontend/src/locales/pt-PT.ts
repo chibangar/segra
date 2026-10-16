@@ -113,6 +113,19 @@ export const ptPT: Translations = {
       showInGameNotifications: 'Notificações no Jogo (Kills e Clips)',
       showInGameNotificationsDesc:
         'Apresenta uma notificação no ecrã durante o jogo ao fazer kills, headshots ou guardar clips (estilo Medal).',
+      inGameNotificationPosition: 'Posição no Ecrã',
+      inGameNotificationPositionDesc:
+        'Escolha o canto do ecrã onde o popout deve surgir durante o jogo.',
+      inGameNotificationSize: 'Tamanho da Notificação',
+      inGameNotificationSizeDesc: 'Escolha a escala do popout.',
+      posTopRight: 'Superior Direito',
+      posTopLeft: 'Superior Esquerdo',
+      posBottomRight: 'Inferior Direito',
+      posBottomLeft: 'Inferior Esquerdo',
+      sizeSmall: 'Pequeno (80%)',
+      sizeMedium: 'Médio (100%)',
+      sizeLarge: 'Grande (125%)',
+      testNotification: 'Testar Notificação',
     },
     captureMode: {
       title: 'Modo de Gravação',
