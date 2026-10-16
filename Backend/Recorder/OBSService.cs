@@ -277,6 +277,9 @@ namespace Segra.Backend.Recorder
 
                 // The file is fully written at this point; let the frontend confirm the save.
                 _ = MessageService.SendFrontendMessage("ReplayBufferSaved", new { });
+#if WINDOWS
+                Windows.Display.InGameNotificationService.ShowClipSaved(request.Game);
+#endif
 
                 // Ensure file is fully written to disk/network before thumbnail generation
                 await EnsureFileReady(savedPath);

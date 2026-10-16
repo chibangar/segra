@@ -349,6 +349,7 @@ export interface Settings {
   gameIntegrations: GameIntegrations;
   soundEffectsVolume: number; // Volume for UI sound effects (0.0 to 1.0)
   showNewBadgeOnVideos: boolean;
+  showInGameNotifications: boolean;
   showGameBackground: boolean; // Show game background while recording
   showAudioWaveformInTimeline: boolean; // Show audio waveform in video timeline
   enableSeparateAudioTracks: boolean; // Advanced: per-source audio tracks
@@ -438,6 +439,7 @@ export const initialSettings: Settings = {
   copyCompressSizesMb: [20, 50, 100, 500],
   soundEffectsVolume: 1,
   showNewBadgeOnVideos: false,
+  showInGameNotifications: true,
   showGameBackground: true,
   showAudioWaveformInTimeline: true,
   enableSeparateAudioTracks: false,

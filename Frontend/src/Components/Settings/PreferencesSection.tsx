@@ -23,10 +23,16 @@ export default function PreferencesSection({ settings, updateSettings }: Prefere
       | 'showGameBackground'
       | 'showAudioWaveformInTimeline'
       | 'showNewBadgeOnVideos'
-      | 'confirmBeforeDeleting';
+      | 'confirmBeforeDeleting'
+      | 'showInGameNotifications';
     label: React.ReactNode;
     description: string;
   }[] = [
+    {
+      key: 'showInGameNotifications',
+      label: t('settings.preferences.showInGameNotifications'),
+      description: t('settings.preferences.showInGameNotificationsDesc'),
+    },
     {
       key: 'showGameBackground',
       label: (

@@ -106,6 +106,18 @@
         "contentHash": "J7c0zqHgdUIrzXU8ko5ft5McUBK6AI0Dcgav6QvGcFvbB21trihIrxYAXMv3tEdkmVqJwow1RXWtoZ9aO95umw=="
       }
     },
+    "net10.0/linux-x64": {
+      "Microsoft.Win32.SystemEvents": {
+        "type": "Transitive",
+        "resolved": "10.0.12",
+        "contentHash": "kdj5cqOwgZCMltEhQ4+WVUoFkMHG08EJfy1MDyS9H+FBg66vTTFyX8YcNl8IQh5wRQv79P+iduQgDGY8ucBR+w=="
+      },
+      "PhotinoX.Native": {
+        "type": "Transitive",
+        "resolved": "5.3.5",
+        "contentHash": "hWVnXYzs4H06L+e0Hw9BWwPPX8rQlcxgK2a2+vWREMXT0IACvD+KnD6oEutGA1joP9ZMYBBpLpG3C+QrGK7n7g=="
+      }
+    },
     "net10.0/win-x64": {
       "Microsoft.Win32.SystemEvents": {
         "type": "Transitive",
@@ -305,6 +317,19 @@
         "type": "Transitive",
         "resolved": "2.1.0",
         "contentHash": "KK+SjNSuKdP+zbavekubi+vaeb1Jo4k87ZF6CMkVWjr6RjJwc8peVtmgzXXDIMy4ZC3ZISyk3llY3q65ISOkBQ=="
+      }
+    },
+    "net10.0-windows10.0.19041/linux-x64": {
+      "System.Management": {
+        "type": "Direct",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "ApUsYmsNG8aPiMxsO6ROGZnqJwSZY8zeMlAQcuQg+ilPFUcIyBUC0BL8qA6wmPLNVsvL4nyhUrhhxh6qn0cx0Q=="
+      },
+      "PhotinoX.Native": {
+        "type": "Transitive",
+        "resolved": "5.3.5",
+        "contentHash": "hWVnXYzs4H06L+e0Hw9BWwPPX8rQlcxgK2a2+vWREMXT0IACvD+KnD6oEutGA1joP9ZMYBBpLpG3C+QrGK7n7g=="
       }
     },
     "net10.0-windows10.0.19041/win-x64": {

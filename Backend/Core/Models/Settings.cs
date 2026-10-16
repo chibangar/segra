@@ -96,6 +96,8 @@ namespace Segra.Backend.Core.Models
         private List<int> _copyCompressSizesMb = new List<int> { 20, 50, 100, 500 };
         private float _soundEffectsVolume = 0.5f;
         private bool _showNewBadgeOnVideos = false;
+        private bool _showInGameNotifications = true;
+        private string _language = "pt-PT";
         private bool _showGameBackground = true;
         private bool _showAudioWaveformInTimeline = true;
         private bool _enableSeparateAudioTracks = false;
@@ -800,6 +802,32 @@ namespace Segra.Backend.Core.Models
                 if (_showNewBadgeOnVideos != value)
                 {
                     _showNewBadgeOnVideos = value;
+                }
+            }
+        }
+
+        [JsonPropertyName("showInGameNotifications")]
+        public bool ShowInGameNotifications
+        {
+            get => _showInGameNotifications;
+            set
+            {
+                if (_showInGameNotifications != value)
+                {
+                    _showInGameNotifications = value;
+                }
+            }
+        }
+
+        [JsonPropertyName("language")]
+        public string Language
+        {
+            get => _language;
+            set
+            {
+                if (_language != value)
+                {
+                    _language = value;
                 }
             }
         }

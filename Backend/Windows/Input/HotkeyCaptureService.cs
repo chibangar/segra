@@ -349,6 +349,9 @@ namespace Segra.Backend.Windows.Input
                         recording.AddBookmark(bookmark);
                         Task.Run(PlayBookmarkSound);
                         _ = MessageService.SendFrontendMessage("BookmarkCreated", new { });
+#if WINDOWS
+                        Display.InGameNotificationService.ShowBookmark(recording.Game);
+#endif
                     }
                     break;
 
@@ -360,6 +363,10 @@ namespace Segra.Backend.Windows.Input
                         // "ReplayBufferSaved" event is sent by SaveReplayBuffer once OBS
                         // confirms the file is actually written.
                         _ = MessageService.SendFrontendMessage("ReplayBufferSaveStarted", new { });
+#if WINDOWS
+                        string gameName = recording?.Game ?? (OBSService.IsAlwaysOnBufferActive ? "Always-On Buffer" : "Replay Buffer");
+                        Display.InGameNotificationService.ShowClipping(gameName);
+#endif
                         Task.Run(OBSService.SaveReplayBuffer);
                         Task.Run(PlayBookmarkSound);
                     }

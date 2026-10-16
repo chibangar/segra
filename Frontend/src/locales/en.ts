@@ -106,6 +106,9 @@ export const en = {
       confirmBeforeDeleting: 'Confirm Before Deleting',
       confirmBeforeDeletingDesc:
         'Asks before videos, recovered recordings or game paths are deleted.',
+      showInGameNotifications: 'In-Game Clip Notifications',
+      showInGameNotificationsDesc:
+        'Shows an on-screen notification in-game when saving clips or bookmarks (like Medal).',
     },
     captureMode: {
       title: 'Capture Mode',
