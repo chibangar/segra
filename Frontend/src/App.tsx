@@ -32,6 +32,7 @@ import { ModalProvider } from './Context/ModalContext';
 import { GeneralMessagesProvider } from './Context/GeneralMessagesContext';
 import MigrationOverlay from './Components/MigrationOverlay';
 import SetupProfileModal from './Components/SetupProfileModal';
+import InAppNotificationOverlay from './Components/InAppNotificationOverlay';
 import { useAuth } from './Hooks/useAuth';
 import { useProfile } from './Hooks/useUserProfile';
 
@@ -124,7 +125,8 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen">
+    <div className="flex h-screen w-screen relative overflow-hidden">
+      <InAppNotificationOverlay />
       {needsUsername && <SetupProfileModal />}
       <div className="h-full">
         <Menu selectedMenu={selectedMenu} onSelectMenu={handleMenuSelection} />

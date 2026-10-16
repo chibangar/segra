@@ -153,6 +153,14 @@ namespace Segra.Backend.Windows.Display
                 if (!Settings.Instance.ShowInGameNotifications)
                     return;
 
+                // Also notify frontend so it appears in real-time inside the Segra app window
+                _ = Task.Run(() => App.MessageService.SendFrontendMessage("InGameNotification", new
+                {
+                    title,
+                    subtitle,
+                    type = type.ToString()
+                }));
+
                 if (_syncContext == null)
                     return;
 

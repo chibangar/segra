@@ -122,6 +122,7 @@ export interface Recording {
   isUsingGameHook: boolean;
   isUsingWindowCapture: boolean;
   coverImageId?: string;
+  bookmarks?: Bookmark[];
   startSettings?: Partial<Settings>; // Recording-related settings as they were at start
 }
 
