@@ -40,7 +40,7 @@
 ## Installation
 
 ### Windows
-1. **Download**: Get `Segra-win-Setup.exe` from the [latest release](https://github.com/Segergren/Segra/releases/latest).  
+1. **Download**: Get `Segra-win-Setup.exe` from the [latest release](https://github.com/chibangar/segra/releases/latest).  
 2. **Install**: Run the setup.  
 3. **Configure**:  
    - Set recording directory and video quality.  
@@ -50,7 +50,7 @@
 ### Linux (Alpha)
 Linux support is in early alpha. It might not start at all, and features that work on Windows can be missing or broken. Please do not open GitHub issues for Linux problems yet.
 
-1. Download `Segra.flatpak` from the [latest release](https://github.com/Segergren/Segra/releases/latest).
+1. Download `Segra.flatpak` from the [latest release](https://github.com/chibangar/segra/releases/latest).
 2. Install it with `flatpak install Segra.flatpak`.
 
 ## Uninstallation
