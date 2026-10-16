@@ -48,7 +48,7 @@ function getDefaultLanguage(): Language {
   } catch {
     // Ignore storage errors
   }
-  return 'pt-PT';
+  return 'en';
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {

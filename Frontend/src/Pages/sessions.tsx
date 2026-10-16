@@ -4,11 +4,10 @@ import { useAppState } from '../Context/AppStateContext';
 import { useClipping } from '../Context/ClippingContext';
 import ContentCard from '../Components/ContentCard';
 import { useI18n } from '../Context/I18nContext';
-import LiveRecordingCard from '../Components/LiveRecordingCard';
 
 export default function Sessions() {
   const { t } = useI18n();
-  const { isFinishingRecording, recording } = useAppState();
+  const { isFinishingRecording } = useAppState();
   const { clippingProgress } = useClipping();
   const isMergingSessions = Object.values(clippingProgress).some(
     (p) => p.outputType === 'Session' && p.progress >= 0,
@@ -20,10 +19,6 @@ export default function Sessions() {
     <ContentCard key="recording-progress" type="Session" isLoading />
   ) : null;
 
-  const liveCardElement = recording ? (
-    <LiveRecordingCard key="live-recording" recording={recording} />
-  ) : null;
-
   return (
     <ContentPage
       contentType="Session"
@@ -33,8 +28,6 @@ export default function Sessions() {
       progressItems={showProgress ? { recording: true } : {}}
       isProgressVisible={showProgress}
       progressCardElement={progressCardElement}
-      liveCardElement={liveCardElement}
-      isLiveVisible={!!recording}
     />
   );
 }

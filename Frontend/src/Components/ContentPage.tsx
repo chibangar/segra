@@ -32,8 +32,6 @@ interface ContentPageProps {
   progressItems?: Record<string, any>; // For AI highlights or clipping progress
   isProgressVisible?: boolean;
   progressCardElement?: React.ReactNode; // Direct element instead of component
-  liveCardElement?: React.ReactNode;
-  isLiveVisible?: boolean;
 }
 
 export default function ContentPage({
@@ -44,8 +42,6 @@ export default function ContentPage({
   progressItems = {},
   isProgressVisible = false,
   progressCardElement,
-  liveCardElement,
-  isLiveVisible = false,
 }: ContentPageProps) {
   const { t, language } = useI18n();
   const state = useAppState();
@@ -621,9 +617,8 @@ export default function ContentPage({
         </div>
       </div>
 
-      {contentItems.length > 0 || hasProgress || isLiveVisible ? (
+      {contentItems.length > 0 || hasProgress ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-          {isLiveVisible && liveCardElement}
           {isProgressVisible && progressCardElement}
 
           {filteredItems.map((video) => (

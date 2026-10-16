@@ -18,15 +18,14 @@ import UpdateCard from './Components/UpdateCard';
 import UnavailableDeviceCard from './Components/UnavailableDeviceCard';
 import StatusCardStack, { StatusCard } from './Components/StatusCardStack';
 import {
-  Clapperboard,
-  OctagonX,
+  CirclePlay,
+  RotateCcw,
+  Scissors,
+  Sparkles,
   Settings,
-  History,
-  Crown,
+  OctagonX,
   Monitor,
-  Play,
   LucideIcon,
-  Languages,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useRef, useEffect, useLayoutEffect, useState, useMemo } from 'react';
@@ -40,15 +39,15 @@ interface MenuProps {
 }
 
 const MENU_ICONS: Record<MenuItemId, LucideIcon> = {
-  'Full Sessions': Play,
-  'Replay Buffer': History,
-  Clips: Clapperboard,
-  Highlights: Crown,
+  'Full Sessions': CirclePlay,
+  'Replay Buffer': RotateCcw,
+  Clips: Scissors,
+  Highlights: Sparkles,
   Settings: Settings,
 };
 
 export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
-  const { t, language, setLanguage } = useI18n();
+  const { t } = useI18n();
   const settings = useSettings();
   const appState = useAppState();
   const { hasLoadedObs, recording, preRecording, alwaysOnBufferActive } = appState;
@@ -184,14 +183,8 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
 
   return (
     <div className="bg-base-300 w-56 h-screen flex flex-col border-r border-base-400">
-      {/* Brand Header */}
-      <div className="flex items-center gap-2.5 px-4 pt-3 pb-1 select-none">
-        <img src="/icon.png" alt="Segra" className="w-8 h-8 rounded-lg shadow-sm object-cover" />
-        <span className="font-bold text-lg tracking-wide text-white">Segra</span>
-      </div>
-
       {/* Menu Items */}
-      <div className="flex flex-col px-4 text-left py-2 relative mt-1">
+      <div className="flex flex-col px-4 text-left py-2 relative mt-2">
         {/* Selection indicator rectangle */}
         <div
           className={`absolute w-1.5 bg-primary rounded-r ${
@@ -273,26 +266,6 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
             );
           })}
         </AnimatePresence>
-
-        {/* Quick Language Switcher right below Settings */}
-        <div className="pt-2 mt-1 border-t border-base-400/50">
-          <Button
-            variant="nav"
-            className="flex items-center justify-between text-gray-300 hover:text-primary transition-colors cursor-pointer"
-            onClick={() => setLanguage(language === 'pt-PT' ? 'en' : 'pt-PT')}
-            title={language === 'pt-PT' ? 'Mudar para Inglês' : 'Mudar para Português'}
-          >
-            <div className="flex items-center gap-2 truncate">
-              <Languages className="w-5 h-5 text-primary shrink-0" />
-              <span className="text-sm font-medium truncate">
-                {language === 'pt-PT' ? 'Português' : 'English'}
-              </span>
-            </div>
-            <span className="badge badge-sm badge-outline text-xs text-primary border-primary shrink-0">
-              {language === 'pt-PT' ? 'PT' : 'EN'}
-            </span>
-          </Button>
-        </div>
       </div>
 
       {/* Status Cards */}
