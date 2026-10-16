@@ -46,12 +46,30 @@ namespace Segra.Backend.App
         static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
 
         [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
         static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("user32.dll")]
+        static extern bool AllowSetForegroundWindow(int dwProcessId);
+
+        [DllImport("user32.dll")]
+        static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("kernel32.dll")]
         static extern uint GetCurrentThreadId();
 
         const int SW_RESTORE = 9;
+        const int ASFW_ANY = -1;
         const int SM_CXFULLSCREEN = 16;
         const int SM_CYFULLSCREEN = 17;
 #endif
@@ -140,6 +158,9 @@ namespace Segra.Backend.App
                         }
                     }
 
+#if WINDOWS
+                    AllowSetForegroundWindow(ASFW_ANY);
+#endif
                     Environment.Exit(0);
                 }
                 catch (Exception ex)
@@ -676,21 +697,61 @@ namespace Segra.Backend.App
 
         public static void BringWindowToFront() => _ = ShowApplicationWindow();
 
+        private static IntPtr GetAppWindowHandle()
+        {
+#if WINDOWS
+            try
+            {
+                if (Window != null && Window.WindowHandle != IntPtr.Zero && IsWindow(Window.WindowHandle))
+                    return Window.WindowHandle;
+
+                IntPtr found = IntPtr.Zero;
+                uint currentPid = (uint)Process.GetCurrentProcess().Id;
+                EnumWindows((hWnd, lParam) =>
+                {
+                    GetWindowThreadProcessId(hWnd, out uint pid);
+                    if (pid == currentPid && IsWindow(hWnd))
+                    {
+                        var sb = new System.Text.StringBuilder(256);
+                        GetWindowText(hWnd, sb, 256);
+                        string title = sb.ToString();
+                        if (title.Contains("Segra") || title.Length > 0)
+                        {
+                            found = hWnd;
+                            return false;
+                        }
+                        if (found == IntPtr.Zero)
+                            found = hWnd;
+                    }
+                    return true;
+                }, IntPtr.Zero);
+
+                return found != IntPtr.Zero ? found : Process.GetCurrentProcess().MainWindowHandle;
+            }
+            catch
+            {
+                return Process.GetCurrentProcess().MainWindowHandle;
+            }
+#else
+            return IntPtr.Zero;
+#endif
+        }
+
         // SetForegroundWindow only works for the process owning the foreground, so borrow its input queue.
         private static void FocusApplicationWindow()
         {
 #if WINDOWS
             try
             {
-                IntPtr hWnd = Process.GetCurrentProcess().MainWindowHandle;
+                IntPtr hWnd = GetAppWindowHandle();
                 if (hWnd == IntPtr.Zero)
                     return;
+
+                ShowWindow(hWnd, SW_RESTORE);
 
                 IntPtr foreground = GetForegroundWindow();
                 if (foreground == hWnd)
                     return;
-
-                ShowWindow(hWnd, SW_RESTORE);
 
                 uint foregroundThread = GetWindowThreadProcessId(foreground, IntPtr.Zero);
                 uint currentThread = GetCurrentThreadId();
@@ -702,7 +763,7 @@ namespace Segra.Backend.App
                 if (attached)
                     AttachThreadInput(currentThread, foregroundThread, false);
 
-                Log.Information("Application window focused");
+                Log.Information($"Application window focused (hWnd: {hWnd})");
             }
             catch (Exception ex)
             {
@@ -1010,22 +1071,8 @@ namespace Segra.Backend.App
                                 string? message = reader.ReadLine();
                                 if (message == "SHOW_WINDOW")
                                 {
-                                    if (Window != null)
-                                    {
-                                        Window.Invoke(() =>
-                                        {
-                                            Window.SetMinimized(false);
-                                        });
-                                        Thread.Sleep(200);
-                                        Window.Invoke(() => Window.BringToFront());
-                                        Log.Information("Window brought to foreground directly from pipe server");
-                                    }
-                                    else
-                                    {
-                                        // Only signal the main thread to create the window if it doesn't exist
-                                        ShowWindowEvent.Set();
-                                        Log.Information("ShowWindowEvent set");
-                                    }
+                                    Log.Information("Received SHOW_WINDOW request via named pipe");
+                                    ShowWindowEvent.Set();
                                 }
                             }
                         }

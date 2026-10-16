@@ -31,14 +31,24 @@ namespace Segra.Backend.Recorder
                     string path = IgnoredFilesPath;
                     if (File.Exists(path))
                     {
-                        var list = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(path));
-                        if (list != null)
+                        string json = File.ReadAllText(path).Trim();
+                        if (json.StartsWith("["))
                         {
-                            foreach (var item in list)
+                            var list = JsonSerializer.Deserialize<List<string>>(json);
+                            if (list != null)
                             {
-                                if (!string.IsNullOrWhiteSpace(item))
-                                    _ignoredFiles.Add(PathUtils.Normalize(item));
+                                foreach (var item in list)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(item))
+                                        _ignoredFiles.Add(PathUtils.Normalize(item));
+                                }
                             }
+                        }
+                        else if (json.StartsWith("\""))
+                        {
+                            var single = JsonSerializer.Deserialize<string>(json);
+                            if (!string.IsNullOrWhiteSpace(single))
+                                _ignoredFiles.Add(PathUtils.Normalize(single));
                         }
                     }
                 }
