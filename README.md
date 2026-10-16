@@ -64,6 +64,11 @@ Linux support is in early alpha. It might not start at all, and features that wo
 ### Linux
 Run `flatpak uninstall tv.segra.Segra`.
 
+## Community
+Join our community on Discord: **[https://discord.gg/sjM6pyMEf](https://discord.gg/sjM6pyMEf)**
+
+---
+
 ## Contributing  
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, dependencies, and dev workflow.
 Help improve Segra by:  

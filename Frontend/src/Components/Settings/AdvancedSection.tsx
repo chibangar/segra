@@ -210,7 +210,7 @@ export default function AdvancedSection({
               variant="primary"
               size="sm"
               onClick={() =>
-                sendMessageToBackend('OpenInBrowser', { Url: 'https://discord.gg/6JbPTS9weF' })
+                sendMessageToBackend('OpenInBrowser', { Url: 'https://discord.gg/sjM6pyMEf' })
               }
             >
               <DiscordIcon size={16} className="shrink-0" aria-hidden="true" />
