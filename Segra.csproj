@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Multi-target: the Windows TFM keeps WinForms/WinRT/DirectX; the plain net10.0 TFM
        builds for Linux. Windows-only source files and packages are gated by TFM below. -->
@@ -47,10 +47,6 @@
     <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
-  <!-- Builds made outside GitHub Actions never auto update -->
-  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' != 'true'">
-    <DefineConstants>$(DefineConstants);LOCAL_BUILD</DefineConstants>
-  </PropertyGroup>
 
   <!-- Linux-only build settings -->
   <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
