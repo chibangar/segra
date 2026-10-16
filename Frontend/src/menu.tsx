@@ -184,8 +184,14 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
 
   return (
     <div className="bg-base-300 w-56 h-screen flex flex-col border-r border-base-400">
+      {/* Brand Header */}
+      <div className="flex items-center gap-2.5 px-4 pt-3 pb-1 select-none">
+        <img src="/icon.png" alt="Segra" className="w-8 h-8 rounded-lg shadow-sm object-cover" />
+        <span className="font-bold text-lg tracking-wide text-white">Segra</span>
+      </div>
+
       {/* Menu Items */}
-      <div className="flex flex-col px-4 text-left py-2 relative mt-2">
+      <div className="flex flex-col px-4 text-left py-2 relative mt-1">
         {/* Selection indicator rectangle */}
         <div
           className={`absolute w-1.5 bg-primary rounded-r ${
