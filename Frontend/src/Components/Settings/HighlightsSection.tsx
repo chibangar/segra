@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Settings as SettingsType } from '../../Models/types';
+import { useI18n } from '../../Context/I18nContext';
 
 interface HighlightsSectionProps {
   settings: SettingsType;
@@ -7,6 +8,7 @@ interface HighlightsSectionProps {
 }
 
 export default function HighlightsSection({ settings, updateSettings }: HighlightsSectionProps) {
+  const { t } = useI18n();
   const [localPaddingBefore, setLocalPaddingBefore] = useState<string>(
     String(settings.highlightPaddingBefore),
   );
@@ -27,7 +29,7 @@ export default function HighlightsSection({ settings, updateSettings }: Highligh
 
   return (
     <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
-      <h2 className="text-xl font-semibold mb-4">Highlights</h2>
+      <h2 className="text-xl font-semibold mb-4">{t('settings.highlights.title')}</h2>
       <div className="space-y-3">
         <label className="flex items-center gap-3 cursor-pointer p-3 bg-base-200 rounded-lg border border-base-400">
           <input
@@ -38,10 +40,9 @@ export default function HighlightsSection({ settings, updateSettings }: Highligh
             className="checkbox checkbox-primary checkbox-sm"
           />
           <div>
-            <div className="font-semibold">Enable Highlights</div>
+            <div className="font-semibold">{t('settings.highlights.enableHighlights')}</div>
             <div className="text-sm opacity-70 mt-0.5">
-              Adds Create Highlight to full sessions, which joins your kills and goals into one
-              video.
+              {t('settings.highlights.enableHighlightsDesc')}
             </div>
           </div>
         </label>
@@ -57,9 +58,9 @@ export default function HighlightsSection({ settings, updateSettings }: Highligh
             disabled={!settings.enableAi}
           />
           <div>
-            <div className="font-semibold">Auto-Generate Highlights After Recording</div>
+            <div className="font-semibold">{t('settings.highlights.autoGenerateHighlights')}</div>
             <div className="text-sm opacity-70 mt-0.5">
-              Creates the highlight automatically when a recording with kills or goals ends.
+              {t('settings.highlights.autoGenerateHighlightsDesc')}
             </div>
           </div>
         </label>
@@ -71,7 +72,7 @@ export default function HighlightsSection({ settings, updateSettings }: Highligh
                 htmlFor="highlightPaddingBefore"
                 className="label text-base-content px-0 !block"
               >
-                <span className="label-text">Before Highlight</span>
+                <span className="label-text">{t('settings.highlights.beforeHighlight')}</span>
               </label>
               <div className="relative w-full">
                 <input
@@ -103,7 +104,7 @@ export default function HighlightsSection({ settings, updateSettings }: Highligh
                 htmlFor="highlightPaddingAfter"
                 className="label text-base-content px-0 !block"
               >
-                <span className="label-text">After Highlight</span>
+                <span className="label-text">{t('settings.highlights.afterHighlight')}</span>
               </label>
               <div className="relative w-full">
                 <input

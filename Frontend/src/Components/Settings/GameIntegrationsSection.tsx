@@ -5,6 +5,7 @@ import {
   usePendingRecordingSettings,
   RECORDING_SETTING_GROUPS,
 } from '../../Hooks/usePendingRecordingSettings';
+import { useI18n } from '../../Context/I18nContext';
 
 // Logo files are named after the integration id
 const LOGOS = import.meta.glob<string>('../../assets/game-logos/*.webp', {
@@ -153,8 +154,14 @@ function GameIntegrationCard({
   showBackground,
   onToggle,
 }: GameIntegrationCardProps) {
+  const { t } = useI18n();
   const logo = LOGOS[`../../assets/game-logos/${integration.id}.webp`];
   const [logoSize, setLogoSize] = useState<{ width: number; height: number }>();
+
+  const betaTip =
+    integration.id === 'overwatch'
+      ? t('settings.gameIntegrations.overwatchBetaNote')
+      : integration.betaNote;
 
   return (
     <label
@@ -173,7 +180,7 @@ function GameIntegrationCard({
       {integration.betaNote && (
         <span
           className="tooltip tooltip-bottom tooltip-primary absolute top-1.5 right-2.5 z-20 text-[10px] font-semibold text-primary drop-shadow-md [&::before]:delay-200 [&::after]:delay-200 [&::before]:text-left [&::before]:leading-snug [&::before]:max-w-52 [&::before]:[--tt-trans:calc(-100%+1rem)] [&::before]:px-3 [&::before]:py-2"
-          data-tip={integration.betaNote}
+          data-tip={betaTip}
         >
           Beta
         </span>
@@ -208,6 +215,7 @@ function GameIntegrationCard({
 }
 
 export default function GameIntegrationsSection() {
+  const { t } = useI18n();
   const settings = useSettings();
   const updateSettings = useSettingsUpdater();
   const hasPendingChanges = usePendingRecordingSettings(RECORDING_SETTING_GROUPS.gameIntegrations);
@@ -227,15 +235,14 @@ export default function GameIntegrationsSection() {
   return (
     <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
       <div className="flex items-center gap-2 mb-2">
-        <h2 className="text-xl font-semibold">Game Integrations</h2>
+        <h2 className="text-xl font-semibold">{t('settings.gameIntegrations.title')}</h2>
         {hasPendingChanges && (
-          <span className="text-xs text-warning">(applies to next recording)</span>
+          <span className="text-xs text-warning">
+            {t('settings.gameIntegrations.appliesToNextRecording')}
+          </span>
         )}
       </div>
-      <p className="text-sm opacity-70 mb-4">
-        Enable automatic event detection for supported games. When enabled, Segra will automatically
-        bookmark kills, goals, and other events during gameplay.
-      </p>
+      <p className="text-sm opacity-70 mb-4">{t('settings.gameIntegrations.description')}</p>
 
       {/* Up to 4 per row, based on the section's own width rather than the window */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(max(13rem,calc((100%_-_2.25rem)/4)),1fr))] gap-3">

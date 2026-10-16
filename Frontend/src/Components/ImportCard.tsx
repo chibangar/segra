@@ -1,24 +1,31 @@
 import type { ImportProgress } from '../Context/ImportContext';
+import { useI18n } from '../Context/I18nContext';
 
 interface ImportCardProps {
   importItem: ImportProgress;
 }
 
 export default function ImportCard({ importItem }: ImportCardProps) {
+  const { t } = useI18n();
   const isRecovery = importItem.action === 'recover';
 
   const getStatusText = () => {
     switch (importItem.status) {
       case 'importing':
         return isRecovery
-          ? 'Recovering'
-          : `Importing ${importItem.currentFileIndex} of ${importItem.totalFiles}`;
+          ? t('cards.importCard.recovering')
+          : t('cards.importCard.importingCount', {
+              current: importItem.currentFileIndex,
+              total: importItem.totalFiles,
+            });
       case 'done':
-        return isRecovery ? 'Recovery Complete' : 'Import Complete';
+        return isRecovery
+          ? t('cards.importCard.recoveryComplete')
+          : t('cards.importCard.importComplete');
       case 'error':
-        return importItem.message || 'Import Error';
+        return importItem.message || t('cards.importCard.importError');
       default:
-        return 'Importing...';
+        return t('cards.importCard.importingDefault');
     }
   };
 

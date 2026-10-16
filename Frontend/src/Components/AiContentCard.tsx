@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo, memo } from 'react';
 import { AiProgress } from '../Models/types';
+import { useI18n } from '../Context/I18nContext';
 
 interface VideoBackgroundProps {
   videoUrl: string;
@@ -86,6 +87,7 @@ interface AiContentCardProps {
 }
 
 const AiContentCard: React.FC<AiContentCardProps> = ({ progress }) => {
+  const { t } = useI18n();
   const [animatedProgress, setAnimatedProgress] = useState(progress.progress);
   const [displayedPercentage, setDisplayedPercentage] = useState(progress.progress);
   const animationFrameRef = useRef<number | null>(null);
@@ -162,7 +164,7 @@ const AiContentCard: React.FC<AiContentCardProps> = ({ progress }) => {
 
             {/* Centered Content */}
             <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
-              <p className="text-base  text-white/90">Creating Highlight</p>
+              <p className="text-base  text-white/90">{t('cards.aiCard.creatingHighlight')}</p>
               <div className="mt-3 w-2/3">
                 <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
                   <div

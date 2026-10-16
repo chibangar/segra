@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import Button from './Button';
+import { useI18n } from '../Context/I18nContext';
 
 export interface ConfirmationModalProps {
   title: string;
@@ -14,11 +15,14 @@ export interface ConfirmationModalProps {
 export default function ConfirmationModal({
   title,
   description,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   onConfirm,
   onCancel,
 }: ConfirmationModalProps) {
+  const { t } = useI18n();
+  const effectiveConfirmText = confirmText ?? t('common.confirm');
+  const effectiveCancelText = cancelText ?? t('common.cancel');
   return (
     <>
       {/* Header */}
@@ -47,10 +51,10 @@ export default function ConfirmationModal({
       {/* Footer with buttons */}
       <div className="modal-action mt-6 flex justify-end gap-3">
         <Button variant="primary" onClick={onCancel}>
-          {cancelText}
+          {effectiveCancelText}
         </Button>
         <Button variant="danger" onClick={onConfirm}>
-          {confirmText}
+          {effectiveConfirmText}
         </Button>
       </div>
     </>

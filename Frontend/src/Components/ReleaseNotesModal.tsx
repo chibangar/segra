@@ -7,6 +7,7 @@ import { ReleaseNote } from '../Models/WebSocketMessages';
 import { ReleaseNotesContext } from '../App';
 import { sendMessageToBackend } from '../Utils/MessageUtils';
 import Button from './Button';
+import { useI18n } from '../Context/I18nContext';
 
 // Scoped styles for markdown content that cannot be expressed as overrides
 const contentStyles = `
@@ -245,6 +246,7 @@ function ReleaseSkeleton() {
 }
 
 export default function ReleaseNotesModal({ onClose, filterVersion }: ReleaseNotesModalProps) {
+  const { t } = useI18n();
   const [notes, setNotes] = useState<ReleaseNote[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { releaseNotes } = useContext(ReleaseNotesContext);
@@ -276,14 +278,16 @@ export default function ReleaseNotesModal({ onClose, filterVersion }: ReleaseNot
       {/* Header */}
       <div className="flex items-start justify-between gap-4 pb-4 border-b border-base-400">
         <div className="min-w-0">
-          <h2 className="font-bold text-2xl text-white leading-tight">What's New</h2>
+          <h2 className="font-bold text-2xl text-white leading-tight">
+            {t('modals.releaseNotes.whatsNew')}
+          </h2>
           <p className="text-sm text-gray-400 mt-0.5">
             {filterVersion
-              ? `Updates since v${filterVersion}`
-              : 'Browse recent releases from Segra'}
+              ? t('modals.releaseNotes.updatesSince', { version: filterVersion })
+              : t('modals.releaseNotes.browseRecent')}
           </p>
         </div>
-        <Button variant="ghost" icon size="sm" onClick={onClose} aria-label="Close">
+        <Button variant="ghost" icon size="sm" onClick={onClose} aria-label={t('common.close')}>
           <X size={18} />
         </Button>
       </div>
@@ -298,12 +302,12 @@ export default function ReleaseNotesModal({ onClose, filterVersion }: ReleaseNot
               <CircleCheck size={30} />
             </div>
             <h3 className="text-lg font-semibold text-white mb-1">
-              {filterVersion ? "You're up to date!" : 'No release notes available'}
+              {filterVersion ? t('modals.releaseNotes.upToDate') : t('modals.releaseNotes.noNotes')}
             </h3>
             <p className="text-sm text-gray-400 max-w-sm">
               {filterVersion
-                ? 'You are on the latest version of Segra. Check back after the next release for new changes.'
-                : 'We could not find any release notes to display right now.'}
+                ? t('modals.releaseNotes.upToDateDesc')
+                : t('modals.releaseNotes.noNotesDesc')}
             </p>
           </div>
         ) : (
@@ -321,7 +325,7 @@ export default function ReleaseNotesModal({ onClose, filterVersion }: ReleaseNot
                   </span>
                   {isLatest && (
                     <span className="inline-flex items-center h-6 bg-success/15 text-success px-2 rounded-md text-[11px] font-medium tracking-wide uppercase border border-success/25 leading-none">
-                      Latest
+                      {t('modals.releaseNotes.latest')}
                     </span>
                   )}
                   {channel && (
@@ -362,12 +366,14 @@ export default function ReleaseNotesModal({ onClose, filterVersion }: ReleaseNot
       {!isLoading && filteredNotes.length > 0 && (
         <div className="mt-6 pt-4 border-t border-base-400 flex items-center justify-between gap-3">
           <span className="text-xs text-gray-500">
-            Showing {filteredNotes.length} release
-            {filteredNotes.length === 1 ? '' : 's'}
+            {t('modals.releaseNotes.showingReleases', {
+              count: filteredNotes.length,
+              plural: filteredNotes.length === 1 ? '' : 's',
+            })}
           </span>
           <Button variant="primary" size="sm" onClick={handleOpenGithubReleases}>
             <GithubIcon size={14} />
-            View on GitHub
+            {t('modals.releaseNotes.viewOnGithub')}
           </Button>
         </div>
       )}

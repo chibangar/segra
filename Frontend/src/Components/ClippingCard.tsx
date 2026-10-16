@@ -4,6 +4,7 @@ import { useAppState } from '../Context/AppStateContext';
 import { contentTypeToFolderName } from '../Utils/FileUtils';
 import { X } from 'lucide-react';
 import CircularProgress from './CircularProgress';
+import { useI18n } from '../Context/I18nContext';
 
 import { ClippingProgress } from '../Context/ClippingContext';
 
@@ -12,6 +13,7 @@ interface ClippingCardProps {
 }
 
 const ClippingCard: React.FC<ClippingCardProps> = ({ clipping }) => {
+  const { t } = useI18n();
   const { cancelClip } = useClipping();
   const appState = useAppState();
   const [displayProgress, setDisplayProgress] = useState(0);
@@ -92,7 +94,7 @@ const ClippingCard: React.FC<ClippingCardProps> = ({ clipping }) => {
                 onClick={handleCancel}
                 disabled={isCancelling}
                 className="absolute right-0 top-1/2 -translate-y-1/2 p-1 transition-colors cursor-pointer disabled:opacity-50"
-                aria-label="Cancel clip"
+                aria-label={t('cards.clipping.cancelClip')}
               >
                 <X size={16} />
               </button>
@@ -102,14 +104,16 @@ const ClippingCard: React.FC<ClippingCardProps> = ({ clipping }) => {
             >
               {isSessionMerge
                 ? isError
-                  ? 'Merge Failed'
-                  : 'Merging'
+                  ? t('cards.clipping.mergeFailed')
+                  : t('cards.clipping.merging')
                 : isError
-                  ? 'Clip Failed'
-                  : 'Creating Clip'}
+                  ? t('cards.clipping.clipFailed')
+                  : t('cards.clipping.creatingClip')}
             </div>
             <div className={`text-xs truncate ${isError ? 'text-error/70' : 'text-gray-400'}`}>
-              {isError ? clipping.error || 'Unknown error' : `${Math.round(displayProgress)}%`}
+              {isError
+                ? clipping.error || t('cards.clipping.unknownError')
+                : `${Math.round(displayProgress)}%`}
             </div>
           </div>
         </div>

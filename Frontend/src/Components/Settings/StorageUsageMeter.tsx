@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Content, ContentType, State } from '../../Models/types';
+import { useI18n } from '../../Context/I18nContext';
 
 const TYPE_COLORS: Record<ContentType, string> = {
   Session: '#3987e5',
@@ -10,13 +11,6 @@ const TYPE_COLORS: Record<ContentType, string> = {
 };
 
 const OTHER_COLOR = '#49515b';
-
-const TYPE_LABELS: Record<ContentType, string> = {
-  Session: 'Sessions',
-  Buffer: 'Buffers',
-  Clip: 'Clips',
-  Highlight: 'Highlights',
-};
 
 const TYPE_ORDER: ContentType[] = ['Session', 'Buffer', 'Clip', 'Highlight'];
 
@@ -29,9 +23,9 @@ const formatGb = (value: number) => {
 };
 
 // "E:/Segra" -> "Drive E:". Linux paths have no letter, so they fall back to "Disk".
-const driveLabel = (contentFolder: string) => {
+const driveLabel = (contentFolder: string, diskLabel: string) => {
   const match = /^([a-zA-Z]):/.exec(contentFolder.trim());
-  return match ? `Drive ${match[1].toUpperCase()}:` : 'Disk';
+  return match ? `Drive ${match[1].toUpperCase()}:` : diskLabel;
 };
 
 interface Segment {
@@ -58,6 +52,15 @@ export default function StorageUsageMeter({
   driveUsedGb,
   driveFreeGb,
 }: StorageUsageMeterProps) {
+  const { t } = useI18n();
+
+  const typeLabels: Record<ContentType, string> = {
+    Session: t('settings.storage.sessions'),
+    Buffer: t('settings.storage.buffers'),
+    Clip: t('settings.storage.clips'),
+    Highlight: t('settings.storage.highlights'),
+  };
+
   const segments = useMemo<Segment[]>(() => {
     // Imported content can live outside the recording path and isn't counted against
     // the limit, so the breakdown has to match what the limit actually measures.
@@ -72,7 +75,7 @@ export default function StorageUsageMeter({
 
     const byType = TYPE_ORDER.map((type) => ({
       key: type,
-      label: TYPE_LABELS[type],
+      label: typeLabels[type],
       color: TYPE_COLORS[type],
       gb:
         inside.filter((c) => c.type === type).reduce((sum, c) => sum + (c.fileSizeKb || 0), 0) /
@@ -83,10 +86,11 @@ export default function StorageUsageMeter({
     const tracked = byType.reduce((sum, s) => sum + s.gb, 0);
     const other = Math.max(0, usedGb - tracked);
 
-    return [...byType, { key: 'Other', label: 'Other', color: OTHER_COLOR, gb: other }].filter(
-      (s) => s.gb >= 0.01,
-    );
-  }, [content, contentFolder, usedGb]);
+    return [
+      ...byType,
+      { key: 'Other', label: t('settings.storage.other'), color: OTHER_COLOR, gb: other },
+    ].filter((s) => s.gb >= 0.01);
+  }, [content, contentFolder, usedGb, typeLabels, t]);
 
   const isOverLimit = storageLimitGb > 0 && usedGb > storageLimitGb;
   const usedPercent = storageLimitGb > 0 ? (usedGb / storageLimitGb) * 100 : 0;
@@ -101,15 +105,18 @@ export default function StorageUsageMeter({
   return (
     <div className="rounded-lg border border-base-400 bg-base-200 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <span className="font-medium text-base-content">Storage Usage</span>
+        <span className="font-medium text-base-content">{t('settings.storage.storageUsage')}</span>
         <span className="flex items-center gap-2 text-sm tabular-nums text-base-content/60">
           <span>
-            {formatGb(usedGb)} GB of {formatGb(storageLimitGb)} GB limit
+            {t('settings.storage.ofLimit', {
+              used: formatGb(usedGb),
+              limit: formatGb(storageLimitGb),
+            })}
           </span>
           <span aria-hidden="true">·</span>
           <span className={`font-semibold ${isOverLimit ? 'text-error' : 'text-base-content/80'}`}>
             {isOverLimit && <AlertTriangle size={13} className="mr-1 inline-block align-[-2px]" />}
-            {Math.round(usedPercent)}%{isOverLimit ? ' over limit' : ''}
+            {Math.round(usedPercent)}%{isOverLimit ? t('settings.storage.overLimit') : ''}
           </span>
         </span>
       </div>
@@ -147,7 +154,7 @@ export default function StorageUsageMeter({
         {!isOverLimit && (
           <span className="flex items-center gap-2">
             <span className="size-2.5 shrink-0 rounded-[2px] border border-base-400 bg-base-400/35" />
-            <span className="text-base-content/80">Free in limit</span>
+            <span className="text-base-content/80">{t('settings.storage.freeInLimit')}</span>
             <span className="tabular-nums text-base-content/50">{formatGb(freeInLimitGb)} GB</span>
           </span>
         )}
@@ -156,10 +163,16 @@ export default function StorageUsageMeter({
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-base-400/50 pt-3 text-xs tabular-nums text-base-content/50">
         <span>
           {hasDriveSpace && driveTotalGb !== null
-            ? `${driveLabel(contentFolder)} ${formatGb(driveUsedGb)} GB used of ${formatGb(driveTotalGb)} GB`
-            : 'Checking drive space...'}
+            ? t('settings.storage.driveUsedOfTotal', {
+                drive: driveLabel(contentFolder, 'Disk'),
+                used: formatGb(driveUsedGb),
+                total: formatGb(driveTotalGb),
+              })
+            : t('settings.storage.checkingDriveSpace')}
         </span>
-        {hasDriveSpace && <span>{formatGb(driveFreeGb)} GB free</span>}
+        {hasDriveSpace && (
+          <span>{t('settings.storage.driveFree', { free: formatGb(driveFreeGb) })}</span>
+        )}
       </div>
     </div>
   );

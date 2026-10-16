@@ -3,12 +3,14 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useUploads, type UploadProgress } from '../Context/UploadContext';
 import CircularProgress from './CircularProgress';
 import { X } from 'lucide-react';
+import { useI18n } from '../Context/I18nContext';
 
 interface UploadCardProps {
   upload: UploadProgress;
 }
 
 export default function UploadCard({ upload }: UploadCardProps) {
+  const { t } = useI18n();
   const { cancelUpload } = useUploads();
   const [isCancelling, setIsCancelling] = useState(false);
   const isUploading = upload.status === 'uploading';
@@ -25,15 +27,15 @@ export default function UploadCard({ upload }: UploadCardProps) {
   const getStatusText = () => {
     switch (upload.status) {
       case 'uploading':
-        return `Uploading ${Math.round(upload.progress)}%`;
+        return t('cards.uploadCard.uploading', { progress: Math.round(upload.progress) });
       case 'processing':
-        return 'Processing';
+        return t('cards.uploadCard.processing');
       case 'done':
-        return 'Upload Complete';
+        return t('cards.uploadCard.uploadComplete');
       case 'error':
-        return upload.message || 'Upload Failed';
+        return upload.message || t('cards.uploadCard.uploadFailed');
       default:
-        return 'Uploading...';
+        return t('cards.uploadCard.uploadingDefault');
     }
   };
 
@@ -74,7 +76,7 @@ export default function UploadCard({ upload }: UploadCardProps) {
                   onClick={handleCancel}
                   disabled={isCancelling}
                   className="absolute right-0 top-1/2 -translate-y-1/2 p-1 transition-colors cursor-pointer disabled:opacity-50"
-                  aria-label="Cancel upload"
+                  aria-label={t('cards.uploadCard.cancelUpload')}
                 >
                   <X size={16} />
                 </motion.button>

@@ -3,8 +3,10 @@ import ContentPage from '../Components/ContentPage';
 import { useAppState } from '../Context/AppStateContext';
 import { useClipping } from '../Context/ClippingContext';
 import ContentCard from '../Components/ContentCard';
+import { useI18n } from '../Context/I18nContext';
 
 export default function Sessions() {
+  const { t } = useI18n();
   const { isFinishingRecording } = useAppState();
   const { clippingProgress } = useClipping();
   const isMergingSessions = Object.values(clippingProgress).some(
@@ -21,7 +23,7 @@ export default function Sessions() {
     <ContentPage
       contentType="Session"
       sectionId="sessions"
-      title="Sessions"
+      title={t('menu.fullSessions')}
       Icon={Play}
       progressItems={showProgress ? { recording: true } : {}}
       isProgressVisible={showProgress}

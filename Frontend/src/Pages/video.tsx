@@ -47,6 +47,7 @@ import Button from '../Components/Button';
 import { useDeleteConfirmation } from '../Hooks/useDeleteConfirmation';
 import AudioTrackIcon from '../Components/AudioTrackIcon';
 import HevcExtensionWarning from '../Components/HevcExtensionWarning';
+import { useI18n } from '../Context/I18nContext';
 
 const Crosshair2Dot = React.forwardRef<SVGSVGElement, LucideProps>((props, ref) => (
   <Icon {...props} ref={ref} iconNode={crosshair2Dot} />
@@ -126,6 +127,7 @@ function getIconMapping(igdbId?: number): Record<BookmarkType, LucideIcon> {
 
 function TopInfoBar({ video }: { video: Content }) {
   const { setSelectedVideo } = useSelectedVideo();
+  const { t } = useI18n();
   const created = new Date(video.createdAt);
   const isValidDate = !isNaN(created.getTime());
   const locale = Intl.DateTimeFormat().resolvedOptions().locale?.toLowerCase() || '';
@@ -151,20 +153,22 @@ function TopInfoBar({ video }: { video: Content }) {
         size="xs"
         className="h-6 min-h-0 px-1"
         onClick={() => setSelectedVideo(null)}
-        aria-label="Back"
+        aria-label={t('video.back')}
       >
         <ArrowLeft className="w-4 h-4" />
       </Button>
       <div className="flex items-center gap-2 overflow-hidden">
         <span className="whitespace-nowrap">
-          Created: {createdDateStr}
+          {t('video.created')}: {createdDateStr}
           {createdTimeStr ? ` ${createdTimeStr}` : ''}
         </span>
         <span>•</span>
-        <span className="whitespace-nowrap">Size: {video.fileSize}</span>
+        <span className="whitespace-nowrap">
+          {t('video.size')}: {video.fileSize}
+        </span>
         <span>•</span>
         <span className="flex items-center gap-1 min-w-0">
-          <span className="whitespace-nowrap">Location:</span>
+          <span className="whitespace-nowrap">{t('video.location')}:</span>
           <a
             className="text-gray-300 cursor-pointer hover:underline hover:text-gray-200 truncate"
             onClick={() => openFileLocation(video.filePath)}
@@ -192,6 +196,7 @@ const fetchThumbnailAtTime = async (videoPath: string, timeInSeconds: number): P
 
 export default function VideoComponent({ video }: { video: Content }) {
   // Context hooks
+  const { t } = useI18n();
   const settings = useSettings();
   const appState = useAppState();
   const updateSettings = useSettingsUpdater();
@@ -1694,7 +1699,7 @@ export default function VideoComponent({ video }: { video: Content }) {
         onClick={handleCopyFile}
       >
         <MorphIcon icon={fileCopied ? Check : Copy} size={20} spring="snappy" />
-        <span>Copy</span>
+        <span>{t('video.copy')}</span>
       </Button>
       {copySizeOptions.length > 0 && (
         <div
@@ -1705,7 +1710,7 @@ export default function VideoComponent({ video }: { video: Content }) {
             variant="primary"
             size="sm"
             className={`h-10 hover:text-accent join-item px-2 ${compressCopyProgress !== null ? 'pointer-events-none' : ''}`}
-            aria-label="Copy as compressed file"
+            aria-label={t('video.copyCompressed')}
             aria-expanded={copyMenuOpen}
             onMouseDown={(e) => {
               e.preventDefault();
@@ -1833,8 +1838,11 @@ export default function VideoComponent({ video }: { video: Content }) {
     if (bookmarkIndex !== -1) {
       const bookmark = video.bookmarks[bookmarkIndex];
       confirmDelete({
-        title: 'Delete bookmark?',
-        description: `Delete the ${bookmark.type.toLowerCase()} bookmark at ${bookmark.time}? This action cannot be undone.`,
+        title: t('video.deleteBookmarkTitle'),
+        description: t('video.deleteBookmarkDesc', {
+          type: bookmark.type.toLowerCase(),
+          time: bookmark.time,
+        }),
         onConfirm: () => {
           video.bookmarks.splice(bookmarkIndex, 1);
 
@@ -1852,8 +1860,8 @@ export default function VideoComponent({ video }: { video: Content }) {
 
   const handleDeleteSegment = (segmentId: number) => {
     confirmDelete({
-      title: 'Delete segment?',
-      description: 'Remove this segment from the clip? This action cannot be undone.',
+      title: t('video.deleteSegmentTitle'),
+      description: t('video.deleteSegmentDesc'),
       onConfirm: () => removeSegment(segmentId),
     });
   };
@@ -1862,9 +1870,9 @@ export default function VideoComponent({ video }: { video: Content }) {
     if (segments.length === 0) return;
 
     confirmDelete({
-      title: 'Delete all segments?',
-      description: `Remove all ${segments.length} ${segments.length === 1 ? 'segment' : 'segments'} from the clip? This action cannot be undone.`,
-      confirmText: 'Delete all',
+      title: t('video.deleteAllSegmentsTitle'),
+      description: t('video.deleteAllSegmentsDesc', { count: segments.length }),
+      confirmText: t('video.deleteAll'),
       onConfirm: clearAllSegments,
     });
   };
@@ -1993,7 +2001,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                   <button
                     onClick={handlePlayPause}
                     className="text-white transition-colors cursor-pointer hover:text-accent"
-                    aria-label={isPlaying ? 'Pause' : 'Play'}
+                    aria-label={isPlaying ? t('video.pause') : t('video.play')}
                   >
                     {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
                   </button>
@@ -2002,7 +2010,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                     <button
                       onClick={toggleMute}
                       className="text-white transition-colors cursor-pointer hover:text-accent"
-                      aria-label={isMuted ? 'Unmute' : 'Mute'}
+                      aria-label={isMuted ? t('video.unmute') : t('video.mute')}
                     >
                       <MorphIcon
                         icon={isMuted || volume < 0.2 ? VolumeX : volume < 0.7 ? Volume1 : Volume2}
@@ -2107,7 +2115,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                     }}
                     disabled={videoScale <= 1}
                     className="flex items-center justify-center p-1 text-white cursor-pointer transition-colors border rounded-md border-base-400 hover:text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    aria-label="Zoom out"
+                    aria-label={t('video.zoomOut')}
                   >
                     <ZoomOut className="w-4 h-4" />
                   </button>
@@ -2118,7 +2126,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                     }}
                     disabled={videoScale >= 4}
                     className="flex items-center justify-center p-1 text-white cursor-pointer transition-colors border rounded-md border-base-400 hover:text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    aria-label="Zoom in"
+                    aria-label={t('video.zoomIn')}
                   >
                     <ZoomIn className="w-4 h-4" />
                   </button>
@@ -2127,7 +2135,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                       ref={speedButtonRef}
                       type="button"
                       className="flex items-center justify-center gap-1 px-2 py-1 text-xs font-medium text-white cursor-pointer transition-colors border rounded-md border-base-400 hover:text-accent hover:bg-accent/20"
-                      aria-label="Change playback speed"
+                      aria-label={t('video.changeSpeed')}
                       aria-haspopup="menu"
                       aria-expanded={showSpeedMenu}
                       onClick={() => {
@@ -2173,7 +2181,9 @@ export default function VideoComponent({ video }: { video: Content }) {
                     onMouseUp={(e) => e.currentTarget.blur()}
                     onTouchEnd={(e) => e.currentTarget.blur()}
                     className="text-white cursor-pointer transition-colors hover:text-accent"
-                    aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                    aria-label={
+                      isFullscreen ? t('video.exitFullscreen') : t('video.enterFullscreen')
+                    }
                   >
                     <MorphIcon
                       icon={isFullscreen ? Minimize : Maximize}
@@ -2478,20 +2488,24 @@ export default function VideoComponent({ video }: { video: Content }) {
                 <button
                   onClick={() => skipTime(-5)}
                   className="h-10 text-gray-300 btn btn-sm btn-secondary hover:text-accent join-item active:translate-none!"
+                  data-tip={t('video.rewind5s')}
+                  aria-label={t('video.rewind5s')}
                 >
                   <RotateCcw className="w-5 h-5" />
                 </button>
                 <button
                   onClick={handlePlayPause}
                   className="h-10 text-gray-300 btn btn-sm btn-secondary hover:text-accent join-item active:translate-none!"
-                  data-tip={isPlaying ? 'Pause' : 'Play'}
+                  data-tip={isPlaying ? t('video.pause') : t('video.play')}
+                  aria-label={isPlaying ? t('video.pause') : t('video.play')}
                 >
                   {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
                 </button>
                 <button
                   onClick={() => skipTime(5)}
                   className="h-10 text-gray-300 btn btn-sm btn-secondary hover:text-accent join-item active:translate-none!"
-                  data-tip="Forward 5s"
+                  data-tip={t('video.forward5s')}
+                  aria-label={t('video.forward5s')}
                 >
                   <RotateCw className="w-5 h-5" />
                 </button>
@@ -2511,7 +2525,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                       )}
                     >
                       <Upload className="w-5 h-5" />
-                      <span>Upload</span>
+                      <span>{t('video.upload')}</span>
                     </Button>
                   )}
                   {copyButtons}
@@ -2528,10 +2542,12 @@ export default function VideoComponent({ video }: { video: Content }) {
                     <Clapperboard className="w-5 h-5" />
                     <span className="grid justify-items-start">
                       <span className="col-start-1 row-start-1 invisible" aria-hidden="true">
-                        Create Clips
+                        {t('video.createClips')}
                       </span>
                       <span className="col-start-1 row-start-1">
-                        {clipOutputMode === 'separate' ? 'Create Clips' : 'Create Clip'}
+                        {clipOutputMode === 'separate'
+                          ? t('video.createClips')
+                          : t('video.createClip')}
                       </span>
                     </span>
                   </Button>
@@ -2542,7 +2558,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                     onClick={handleAddSegment}
                   >
                     <SquarePlus className="w-5 h-5" />
-                    <span>Add Segment</span>
+                    <span>{t('video.addSegment')}</span>
                   </Button>
                 </>
               )}
@@ -2635,7 +2651,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                 <div className="flex items-center justify-center pb-1">
                   <span
                     className="text-sm font-medium text-gray-300 opacity-50 tabular-nums"
-                    title="Total length of all segments"
+                    title={t('video.totalSegmentsLength')}
                   >
                     {formatTime(totalSegmentsDuration)}
                   </span>
@@ -2651,7 +2667,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                 disabled={segments.length === 0}
               >
                 <Trash2 className="w-4 h-4" />
-                <span>Clear</span>
+                <span>{t('video.clear')}</span>
               </Button>
               <div
                 ref={segmentOptionsRef}
@@ -2661,7 +2677,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                   variant="primary"
                   size="sm"
                   className="h-10 px-2.5 hover:text-accent"
-                  aria-label="Segment options"
+                  aria-label={t('video.segmentOptions')}
                   aria-expanded={segmentOptionsOpen}
                   onMouseDown={(e) => {
                     e.preventDefault();
@@ -2686,10 +2702,10 @@ export default function VideoComponent({ video }: { video: Content }) {
                         }
                         className="checkbox checkbox-sm checkbox-accent"
                       />
-                      Clear segments after clipping
+                      {t('video.clearSegmentsAfter')}
                     </label>
                   </li>
-                  <li className="menu-title px-2 pt-2 pb-1 text-xs">Clip output</li>
+                  <li className="menu-title px-2 pt-2 pb-1 text-xs">{t('video.clipOutput')}</li>
                   {(['combined', 'separate'] as const).map((mode) => (
                     <li key={mode}>
                       <label className="flex items-center gap-2 px-2! text-sm text-gray-300 hover:bg-transparent! active:bg-transparent!">
@@ -2700,7 +2716,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                           onChange={() => setClipOutputMode(mode)}
                           className="radio radio-sm radio-accent"
                         />
-                        {mode === 'combined' ? 'Combined' : 'Separate'}
+                        {mode === 'combined' ? t('video.combined') : t('video.separate')}
                       </label>
                     </li>
                   ))}

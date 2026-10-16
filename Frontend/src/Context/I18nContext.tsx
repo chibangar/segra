@@ -10,8 +10,8 @@ export interface SupportedLanguage {
 }
 
 export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
-  { code: 'en', label: 'English' },
   { code: 'pt-PT', label: 'Português (Portugal)' },
+  { code: 'en', label: 'English' },
 ];
 
 const dictionaries: Record<Language, Translations> = {
@@ -46,13 +46,13 @@ function getDefaultLanguage(): Language {
       return saved;
     }
     const navLang = (navigator.language || '').toLowerCase();
-    if (navLang.startsWith('pt')) {
-      return 'pt-PT';
+    if (navLang.startsWith('en')) {
+      return 'en';
     }
   } catch {
     // Ignore storage errors
   }
-  return 'en';
+  return 'pt-PT';
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {

@@ -3,8 +3,10 @@ import { Download, Check, TriangleAlert, X } from 'lucide-react';
 import { sendMessageToBackend } from '../Utils/MessageUtils';
 import { GithubIcon } from './icons/BrandIcons';
 import Button from './Button';
+import { useI18n } from '../Context/I18nContext';
 
 export default function UpdateCard() {
+  const { t } = useI18n();
   const { updateInfo, openReleaseNotesModal, clearUpdateInfo } = useUpdate();
 
   if (!updateInfo) return null;
@@ -40,9 +42,13 @@ export default function UpdateCard() {
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">
-                {updateInfo.status === 'downloading' ? 'Update in Progress' : 'Update Available'}
+                {updateInfo.status === 'downloading'
+                  ? t('cards.update.inProgress')
+                  : t('cards.update.available')}
               </h3>
-              <p className="text-xs text-gray-400">Version {updateInfo.version}</p>
+              <p className="text-xs text-gray-400">
+                {t('cards.update.version', { version: updateInfo.version })}
+              </p>
             </div>
           </div>
         </div>
@@ -50,7 +56,7 @@ export default function UpdateCard() {
           <button
             onClick={clearUpdateInfo}
             className="absolute top-2.5 right-1 p-1 rounded hover:bg-base-100 transition-colors cursor-pointer"
-            aria-label="Dismiss update notification"
+            aria-label={t('common.close')}
           >
             <X size={14} />
           </button>
@@ -66,7 +72,7 @@ export default function UpdateCard() {
             onClick={handleInstallClick}
           >
             <Download size={14} />
-            Install Now
+            {t('cards.update.installNow')}
           </Button>
           <Button
             variant="primary"
@@ -75,7 +81,7 @@ export default function UpdateCard() {
             onClick={() => openReleaseNotesModal(__APP_VERSION__)}
           >
             <GithubIcon size={14} />
-            Release Notes
+            {t('cards.update.releaseNotes')}
           </Button>
         </div>
       </div>

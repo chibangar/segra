@@ -4,6 +4,7 @@ import {
   usePendingRecordingSettings,
   RECORDING_SETTING_GROUPS,
 } from '../../Hooks/usePendingRecordingSettings';
+import { useI18n } from '../../Context/I18nContext';
 
 interface CaptureModeSectionProps {
   settings: SettingsType;
@@ -11,8 +12,9 @@ interface CaptureModeSectionProps {
 }
 
 export default function CaptureModeSection({ settings, updateSettings }: CaptureModeSectionProps) {
+  const { t, language } = useI18n();
   const hasPendingChanges = usePendingRecordingSettings(RECORDING_SETTING_GROUPS.captureMode);
-  const bufferLength = formatBufferLength(settings.replayBufferDuration);
+  const bufferLength = formatBufferLength(settings.replayBufferDuration, t);
   const hotkeyFor = (action: HotkeyAction, fallback: string) => {
     const hotkey = settings.keybindings.find(
       (k) => k.action === action && k.enabled && k.keys.length > 0,
@@ -23,14 +25,19 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
       fallback
     );
   };
-  const saveHotkey = hotkeyFor(HotkeyAction.SaveReplayBuffer, 'the Save Replay Buffer hotkey');
+  const saveHotkey = hotkeyFor(
+    HotkeyAction.SaveReplayBuffer,
+    t('settings.captureMode.saveHotkeyFallback'),
+  );
 
   return (
     <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
       <div className="flex items-center gap-2 mb-4">
-        <h2 className="text-xl font-semibold">Capture Mode</h2>
+        <h2 className="text-xl font-semibold">{t('settings.captureMode.title')}</h2>
         {hasPendingChanges && (
-          <span className="text-xs text-warning">(applies to next recording)</span>
+          <span className="text-xs text-warning">
+            {t('settings.captureMode.appliesToNextRecording')}
+          </span>
         )}
       </div>
       <div className="grid grid-cols-3 gap-4">
@@ -38,13 +45,13 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
           className={`bg-base-200 p-4 rounded-lg flex flex-col transition-all transition-200 border ${settings.recordingMode == 'Session' ? 'border-primary' : 'border-base-400'} cursor-pointer hover:bg-base-300`}
           onClick={() => updateSettings({ recordingMode: 'Session' })}
         >
-          <div className="text-lg font-semibold mb-3">Session Recording</div>
+          <div className="text-lg font-semibold mb-3">
+            {t('settings.captureMode.sessionRecording')}
+          </div>
           <div className="text-sm text-left">
             <p>
-              <span className="opacity-70">
-                Records each game from launch to close as one video.
-              </span>{' '}
-              <span className="text-primary">Uses disk space.</span>
+              <span className="opacity-70">{t('settings.captureMode.sessionRecordingDesc')}</span>{' '}
+              <span className="text-primary">{t('settings.captureMode.usesDiskSpace')}</span>
             </p>
           </div>
         </div>
@@ -53,14 +60,16 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
           onClick={() => updateSettings({ recordingMode: 'Buffer' })}
         >
           <div className="flex items-center gap-2 mb-3">
-            <div className="text-lg font-semibold text-center">Replay Buffer</div>
+            <div className="text-lg font-semibold text-center">
+              {t('settings.captureMode.replayBuffer')}
+            </div>
           </div>
           <div className="text-sm text-left">
             <p>
               <span className="opacity-70">
-                Keeps the last {bufferLength} of gameplay in memory so you can save it as a clip.
+                {t('settings.captureMode.replayBufferDesc', { bufferLength })}
               </span>{' '}
-              <span className="text-primary">Uses RAM.</span>
+              <span className="text-primary">{t('settings.captureMode.usesRam')}</span>
             </p>
           </div>
         </div>
@@ -69,14 +78,14 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
           onClick={() => updateSettings({ recordingMode: 'Hybrid' })}
         >
           <div className="flex items-center gap-2 mb-3">
-            <div className="text-lg font-semibold">Hybrid (Session + Buffer)</div>
+            <div className="text-lg font-semibold">{t('settings.captureMode.hybrid')}</div>
           </div>
           <div className="text-sm text-left">
             <p>
               <span className="opacity-70">
-                Records each game as one video and lets you save the last {bufferLength} as a clip.
+                {t('settings.captureMode.hybridDesc', { bufferLength })}
               </span>{' '}
-              <span className="text-primary">Uses RAM and disk space.</span>
+              <span className="text-primary">{t('settings.captureMode.usesRamAndDisk')}</span>
             </p>
           </div>
         </div>
@@ -89,10 +98,19 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
           onChange={(e) => updateSettings({ alwaysOnReplayBuffer: e.target.checked })}
         />
         <div>
-          <div className="font-semibold">Always-on Replay Buffer</div>
+          <div className="font-semibold">{t('settings.captureMode.alwaysOnReplayBuffer')}</div>
           <div className="text-sm opacity-70 mt-0.5">
-            Keeps a replay buffer of your display running when no game is recording. Press{' '}
-            {saveHotkey} to save the last {bufferLength} as a clip.
+            {language === 'pt-PT' ? (
+              <>
+                Mantém um buffer de repetição do seu ecrã ativo quando nenhum jogo está a gravar.
+                Prima {saveHotkey} para guardar os últimos {bufferLength} como recorte.
+              </>
+            ) : (
+              <>
+                Keeps a replay buffer of your display running when no game is recording. Press{' '}
+                {saveHotkey} to save the last {bufferLength} as a clip.
+              </>
+            )}
           </div>
         </div>
       </label>
@@ -100,10 +118,12 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
   );
 }
 
-function formatBufferLength(seconds: number): string {
-  if (seconds < 60) return `${seconds} seconds`;
+function formatBufferLength(seconds: number, t: (key: any, params?: any) => string): string {
+  if (seconds < 60) return `${seconds} ${t('common.seconds')}`;
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
-  const minutesText = `${minutes} minute${minutes === 1 ? '' : 's'}`;
-  return rest === 0 ? minutesText : `${minutesText} ${rest} seconds`;
+  const minutesText = `${minutes} ${minutes === 1 ? t('common.minute') : t('common.minutes')}`;
+  return rest === 0
+    ? minutesText
+    : `${minutesText} ${rest} ${rest === 1 ? t('common.second') : t('common.seconds')}`;
 }

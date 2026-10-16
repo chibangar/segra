@@ -4,20 +4,10 @@ import { DiscordIcon } from '../icons/BrandIcons';
 import discordLoading from '../../assets/discord-loading.webp';
 import { useAuth } from '../../Hooks/useAuth';
 import { useProfile } from '../../Hooks/useUserProfile';
+import { useI18n } from '../../Context/I18nContext';
 import Button from '../Button';
 
 type AuthTab = 'login' | 'register';
-
-// Plain-language versions of the auth service's messages
-const friendlyAuthError = (message: string) => {
-  const m = message.toLowerCase();
-  if (m.includes('invalid login credentials')) return 'Wrong email or password.';
-  if (m.includes('email not confirmed'))
-    return 'Confirm your email first. Check your inbox for the link.';
-  if (m.includes('already registered'))
-    return 'An account with this email already exists. Try signing in instead.';
-  return message;
-};
 
 function Banner({ tone, children }: { tone: 'error' | 'success'; children: React.ReactNode }) {
   const colors =
@@ -36,6 +26,17 @@ function Banner({ tone, children }: { tone: 'error' | 'success'; children: React
 }
 
 export default function AccountSection() {
+  const { t } = useI18n();
+
+  // Plain-language versions of the auth service's messages
+  const friendlyAuthError = (message: string) => {
+    const m = message.toLowerCase();
+    if (m.includes('invalid login credentials')) return t('settings.account.wrongCredentials');
+    if (m.includes('email not confirmed')) return t('settings.account.emailNotConfirmed');
+    if (m.includes('already registered')) return t('settings.account.alreadyRegistered');
+    return message;
+  };
+
   const {
     user,
     session,
@@ -89,18 +90,18 @@ export default function AccountSection() {
     setConfirmEmailMessage('');
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError(t('settings.account.passwordsDoNotMatch'));
       return;
     }
 
     if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+      setError(t('settings.account.passwordLengthReq'));
       return;
     }
 
     const result = await register(email, password);
     if (result?.confirmEmail) {
-      setConfirmEmailMessage('Check your email to confirm your account, then log in.');
+      setConfirmEmailMessage(t('settings.account.checkEmailConfirm'));
     }
   };
 
@@ -125,7 +126,7 @@ export default function AccountSection() {
   if (!session) {
     return (
       <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400 space-y-4">
-        <h2 className="text-xl font-semibold">Sign In</h2>
+        <h2 className="text-xl font-semibold">{t('settings.account.signIn')}</h2>
         {confirmEmailMessage && <Banner tone="success">{confirmEmailMessage}</Banner>}
 
         <div className="space-y-4">
@@ -136,7 +137,7 @@ export default function AccountSection() {
               >
                 <div className="flex items-center gap-1 text-xs font-medium text-warning">
                   <History className="w-3 h-3" />
-                  Last used
+                  {t('settings.account.lastUsed')}
                 </div>
               </div>
             )}
@@ -159,35 +160,37 @@ export default function AccountSection() {
             >
               {!isWaitingForDiscord && <DiscordIcon className="w-5 h-5" />}
               {isWaitingForDiscord
-                ? 'Waiting for your browser...'
+                ? t('settings.account.waitingForBrowser')
                 : isAuthenticating
-                  ? 'Connecting...'
-                  : 'Continue with Discord'}
+                  ? t('settings.account.connecting')
+                  : t('settings.account.continueWithDiscord')}
             </Button>
           </div>
 
           {isWaitingForDiscord && (
             <p className="-mt-2 text-center text-xs opacity-70">
-              Finish signing in with Discord in your browser.{' '}
+              {t('settings.account.finishDiscordInBrowser')}{' '}
               <button
                 type="button"
                 className="underline underline-offset-2 hover:text-base-content"
                 onClick={cancelDiscordLogin}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
             </p>
           )}
 
           {lastAttempt === 'discord' && errorBanner}
 
-          <div className="divider my-0 text-sm opacity-70">Or Use Email</div>
+          <div className="divider my-0 text-sm opacity-70">{t('settings.account.orUseEmail')}</div>
 
           {tab === 'login' ? (
             <form onSubmit={handleEmailLogin} className="space-y-4">
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">Email</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.account.email')}
+                  </span>
                 </label>
                 <input
                   type="email"
@@ -205,7 +208,9 @@ export default function AccountSection() {
 
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">Password</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.account.password')}
+                  </span>
                 </label>
                 <input
                   type="password"
@@ -230,7 +235,7 @@ export default function AccountSection() {
                   >
                     <div className="flex items-center gap-1 text-xs font-medium text-warning">
                       <History className="w-3 h-3" />
-                      Last used
+                      {t('settings.account.lastUsed')}
                     </div>
                   </div>
                 )}
@@ -241,18 +246,18 @@ export default function AccountSection() {
                   loading={isAuthenticating}
                 >
                   <Mail size={20} />
-                  Sign In with Email
+                  {t('settings.account.signInWithEmail')}
                 </Button>
               </div>
 
               <p className="text-center text-sm">
-                <span className="opacity-70">Don&apos;t have an account?</span>{' '}
+                <span className="opacity-70">{t('settings.account.dontHaveAccount')}</span>{' '}
                 <button
                   type="button"
                   className="text-primary font-medium hover:underline underline-offset-2 cursor-pointer"
                   onClick={() => switchTab('register')}
                 >
-                  Create one
+                  {t('settings.account.createOne')}
                 </button>
               </p>
             </form>
@@ -260,7 +265,9 @@ export default function AccountSection() {
             <form onSubmit={handleRegister} className="space-y-4">
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">Email</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.account.email')}
+                  </span>
                 </label>
                 <input
                   type="email"
@@ -278,7 +285,9 @@ export default function AccountSection() {
 
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">Password</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.account.password')}
+                  </span>
                 </label>
                 <input
                   type="password"
@@ -296,7 +305,9 @@ export default function AccountSection() {
 
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">Confirm Password</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.account.confirmPassword')}
+                  </span>
                 </label>
                 <input
                   type="password"
@@ -321,17 +332,17 @@ export default function AccountSection() {
                 loading={isAuthenticating}
               >
                 <Mail size={20} />
-                Create Account
+                {t('settings.account.createAccount')}
               </Button>
 
               <p className="text-center text-sm">
-                <span className="opacity-70">Already have an account?</span>{' '}
+                <span className="opacity-70">{t('settings.account.alreadyHaveAccount')}</span>{' '}
                 <button
                   type="button"
                   className="text-primary font-medium hover:underline underline-offset-2 cursor-pointer"
                   onClick={() => switchTab('login')}
                 >
-                  Sign in
+                  {t('settings.account.signInLink')}
                 </button>
               </p>
             </form>
@@ -401,7 +412,7 @@ export default function AccountSection() {
                   }}
                 >
                   <LogOut size={20} />
-                  <span>Logout</span>
+                  <span>{t('settings.account.logout')}</span>
                 </Button>
               </li>
             </ul>

@@ -7,6 +7,7 @@ import { Settings as SettingsType } from '../../Models/types';
 import { sendMessageToBackend } from '../../Utils/MessageUtils';
 import Button from '../Button';
 import { useAppState } from '../../Context/AppStateContext';
+import { useI18n } from '../../Context/I18nContext';
 
 interface AdvancedSectionProps {
   settings: SettingsType;
@@ -24,6 +25,7 @@ export default function AdvancedSection({
   checkForUpdates,
   canSelfUpdate,
 }: AdvancedSectionProps) {
+  const { t } = useI18n();
   const appState = useAppState();
   const rowRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
@@ -48,13 +50,9 @@ export default function AdvancedSection({
   return (
     <>
       <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
-        <h2 className="text-xl font-semibold mb-4">Updates</h2>
+        <h2 className="text-xl font-semibold mb-4">{t('settings.advanced.updates')}</h2>
         {!canSelfUpdate && (
-          <p className="text-sm opacity-70 mb-4">
-            Segra updates automatically through Flatpak. To update now, run{' '}
-            <code className="px-1 py-0.5 rounded bg-base-200">flatpak update tv.segra.Segra</code>{' '}
-            or use your software center.
-          </p>
+          <p className="text-sm opacity-70 mb-4">{t('settings.advanced.flatpakDesc')}</p>
         )}
         {/* OBS Version is hidden when the recorder is fixed for this install (bundled or already downloaded) */}
         {(canSelfUpdate || appState.availableOBSVersions.length > 0) && (
@@ -62,12 +60,14 @@ export default function AdvancedSection({
             {canSelfUpdate && (
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">Update Channel</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.advanced.updateChannel')}
+                  </span>
                 </label>
                 <DropdownSelect
                   items={[
-                    { value: 'stable', label: 'Stable' },
-                    { value: 'beta', label: 'Beta' },
+                    { value: 'stable', label: t('settings.advanced.stable') },
+                    { value: 'beta', label: t('settings.advanced.beta') },
                   ]}
                   value={settings.receiveBetaUpdates ? 'beta' : 'stable'}
                   onChange={(val) => updateSettings({ receiveBetaUpdates: val === 'beta' })}
@@ -77,18 +77,20 @@ export default function AdvancedSection({
             {appState.availableOBSVersions.length > 0 && (
               <div className="form-control">
                 <label className="label">
-                  <span className="label-text text-base-content">OBS Version</span>
+                  <span className="label-text text-base-content">
+                    {t('settings.advanced.obsVersion')}
+                  </span>
                 </label>
                 <DropdownSelect
                   items={[
-                    { value: '', label: 'Automatic' },
+                    { value: '', label: t('settings.advanced.automatic') },
                     ...[...appState.availableOBSVersions]
                       .sort((a, b) => {
                         return b.version.localeCompare(a.version, undefined, { numeric: true });
                       })
                       .map((v) => ({
                         value: v.version,
-                        label: `${v.version}${v.isBeta ? ' (Beta)' : ''}`,
+                        label: `${v.version}${v.isBeta ? ` (${t('settings.advanced.beta')})` : ''}`,
                       })),
                   ]}
                   value={settings.selectedOBSVersion || ''}
@@ -108,7 +110,11 @@ export default function AdvancedSection({
               loading={appState.isCheckingForUpdates}
             >
               {!appState.isCheckingForUpdates && <RefreshCw size={16} className="shrink-0" />}
-              <span className="inline-block">Check for Updates</span>
+              <span className="inline-block">
+                {appState.isCheckingForUpdates
+                  ? t('settings.advanced.checkingForUpdates')
+                  : t('settings.advanced.checkForUpdates')}
+              </span>
             </Button>
           )}
           <Button
@@ -118,7 +124,7 @@ export default function AdvancedSection({
             onClick={() => openReleaseNotesModal(null)}
           >
             <GithubIcon size={16} aria-hidden="true" />
-            <span className="inline-block">View Release Notes</span>
+            <span className="inline-block">{t('settings.advanced.viewReleaseNotes')}</span>
           </Button>
         </div>
         {canSelfUpdate && (
@@ -131,9 +137,11 @@ export default function AdvancedSection({
               className="checkbox checkbox-primary checkbox-sm"
             />
             <div>
-              <div className="font-semibold">Install Updates Automatically</div>
+              <div className="font-semibold">
+                {t('settings.advanced.installUpdatesAutomatically')}
+              </div>
               <div className="text-sm opacity-70 mt-0.5">
-                Installs when nothing is recording and the window is closed.
+                {t('settings.advanced.installUpdatesAutomaticallyDesc')}
               </div>
             </div>
           </label>
@@ -141,7 +149,7 @@ export default function AdvancedSection({
       </div>
 
       <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
-        <h2 className="text-xl font-semibold mb-4">Online Features</h2>
+        <h2 className="text-xl font-semibold mb-4">{t('settings.advanced.onlineFeatures')}</h2>
         <div ref={rowRef}>
           <label className="flex items-center gap-3 cursor-pointer p-3 bg-base-200 rounded-lg border border-base-400 overflow-hidden">
             <input
@@ -153,7 +161,7 @@ export default function AdvancedSection({
             />
             <div>
               <span ref={contentRef} className="inline-flex items-center gap-1.5 font-semibold">
-                Airplane Mode
+                {t('settings.advanced.airplaneMode')}
                 <AnimatePresence initial={false}>
                   {settings.airplaneMode && (
                     <motion.span
@@ -177,7 +185,7 @@ export default function AdvancedSection({
                 </AnimatePresence>
               </span>
               <div className="text-sm opacity-70 mt-0.5">
-                Signs you out and hides uploading and sharing.
+                {t('settings.advanced.airplaneModeDesc')}
               </div>
             </div>
           </label>
@@ -196,7 +204,7 @@ export default function AdvancedSection({
               }
             >
               <BookOpen className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="leading-none">Docs</span>
+              <span className="leading-none">{t('settings.advanced.docs')}</span>
             </Button>
             <Button
               variant="primary"
@@ -206,7 +214,7 @@ export default function AdvancedSection({
               }
             >
               <DiscordIcon size={16} className="shrink-0" aria-hidden="true" />
-              <span className="leading-none">Discord</span>
+              <span className="leading-none">{t('settings.advanced.discord')}</span>
             </Button>
             <Button
               variant="primary"
@@ -214,7 +222,7 @@ export default function AdvancedSection({
               onClick={() => sendMessageToBackend('OpenLogsLocation')}
             >
               <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="leading-none">Logs</span>
+              <span className="leading-none">{t('settings.advanced.logs')}</span>
             </Button>
           </div>
           <div>

@@ -2,9 +2,11 @@ import { TriangleAlert } from 'lucide-react';
 import Button from '../Button';
 import { useAppState } from '../../Context/AppStateContext';
 import { sendMessageToBackend } from '../../Utils/MessageUtils';
+import { useI18n } from '../../Context/I18nContext';
 
 // Shown only when the automatic install of the elevated-hotkey helper was declined or failed.
 export default function HotkeyBrokerWarning() {
+  const { t } = useI18n();
   const { hotkeyBroker } = useAppState();
   if (!hotkeyBroker?.actionRequired) return null;
 
@@ -16,8 +18,8 @@ export default function HotkeyBrokerWarning() {
       <TriangleAlert className="h-5 w-5 shrink-0" />
       <span className="min-w-0 flex-1">
         {hotkeyBroker.installed
-          ? 'The helper for hotkeys over games running as administrator is out of date. Updating it needs administrator permission.'
-          : 'Hotkeys do not reach games that run as administrator. Installing the helper fixes this and needs administrator permission.'}
+          ? t('settings.hotkeyBroker.updateDesc')
+          : t('settings.hotkeyBroker.installDesc')}
       </span>
       <Button
         variant="primary"
@@ -25,7 +27,9 @@ export default function HotkeyBrokerWarning() {
         className="shrink-0"
         onClick={() => sendMessageToBackend('InstallHotkeyBroker')}
       >
-        {hotkeyBroker.installed ? 'Update' : 'Install'}
+        {hotkeyBroker.installed
+          ? t('settings.hotkeyBroker.update')
+          : t('settings.hotkeyBroker.install')}
       </Button>
     </div>
   );

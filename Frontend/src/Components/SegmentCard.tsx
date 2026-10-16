@@ -4,6 +4,7 @@ import { useDrag, useDrop } from 'react-dnd';
 import { Headphones } from 'lucide-react';
 import { useDeleteConfirmation } from '../Hooks/useDeleteConfirmation';
 import AudioTrackIcon from './AudioTrackIcon';
+import { useI18n } from '../Context/I18nContext';
 
 const DRAG_TYPE = 'SEGMENT_CARD';
 
@@ -21,6 +22,7 @@ const SegmentCard: React.FC<SegmentCardProps> = React.memo(
     onMutedAudioTracksChange,
     onAudioTrackVolumesChange,
   }) => {
+    const { t } = useI18n();
     const [audioMenuPos, setAudioMenuPos] = useState<{
       x: number;
       y: number;
@@ -127,8 +129,8 @@ const SegmentCard: React.FC<SegmentCardProps> = React.memo(
         onContextMenu={(e) => {
           e.preventDefault();
           confirmDelete({
-            title: 'Delete segment?',
-            description: 'Remove this segment from the clip? This action cannot be undone.',
+            title: t('video.deleteSegmentTitle'),
+            description: t('video.deleteSegmentDesc'),
             onConfirm: () => removeSegment(segment.id),
           });
         }}
@@ -173,7 +175,7 @@ const SegmentCard: React.FC<SegmentCardProps> = React.memo(
           </div>
         ) : (
           <div className="h-32 bg-gray-700 flex items-center justify-center text-white">
-            <span>No thumbnail</span>
+            <span>{t('video.noThumbnail')}</span>
           </div>
         )}
 

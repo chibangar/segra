@@ -10,6 +10,7 @@ import Button from '../Button';
 import MigrationFlow from '../MigrationFlow';
 import { useAppState } from '../../Context/AppStateContext';
 import { useContentMigration } from '../../Context/ContentMigrationContext';
+import { useI18n } from '../../Context/I18nContext';
 import StorageUsageMeter from './StorageUsageMeter';
 
 const normalizePath = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -37,6 +38,7 @@ export default function StorageSettingsSection({
   settings,
   updateSettings,
 }: StorageSettingsSectionProps) {
+  const { t } = useI18n();
   const appState = useAppState();
   const { isMigrating } = useContentMigration();
   const [localStorageLimit, setLocalStorageLimit] = useState<string>(String(settings.storageLimit));
@@ -100,7 +102,7 @@ export default function StorageSettingsSection({
   const handleMigrateClick = () => {
     openModal(
       <ConfirmationModal
-        title="Move videos to recording path"
+        title={t('settings.storage.moveVideosModalTitle')}
         description={
           <MigrationFlow
             fromPaths={fromPaths}
@@ -109,8 +111,8 @@ export default function StorageSettingsSection({
             sizeGb={outsideSizeGb}
           />
         }
-        confirmText="Move Videos"
-        cancelText="Cancel"
+        confirmText={t('settings.storage.moveVideosConfirmText')}
+        cancelText={t('common.cancel')}
         onConfirm={() => {
           sendMessageToBackend('MigrateContent');
           closeModal();
@@ -134,10 +136,13 @@ export default function StorageSettingsSection({
     if (numericLimit < currentFolderSizeGb) {
       openModal(
         <ConfirmationModal
-          title="Storage Limit Warning"
-          description={`The storage limit you entered (${numericLimit} GB) is lower than your current folder size (${currentFolderSizeGb.toFixed(2)} GB).\n\nThis will cause older recordings to be automatically deleted to free up space.\n\nAre you sure you want to continue?`}
-          confirmText="Apply Limit"
-          cancelText="Cancel"
+          title={t('settings.storage.storageLimitWarningTitle')}
+          description={t('settings.storage.storageLimitWarningDesc', {
+            limit: numericLimit,
+            current: currentFolderSizeGb.toFixed(2),
+          })}
+          confirmText={t('settings.storage.applyLimit')}
+          cancelText={t('common.cancel')}
           onConfirm={() => {
             updateSettings({ storageLimit: numericLimit });
             closeModal();
@@ -156,12 +161,14 @@ export default function StorageSettingsSection({
 
   return (
     <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
-      <h2 className="text-xl font-semibold mb-4">Storage Settings</h2>
+      <h2 className="text-xl font-semibold mb-4">{t('settings.storage.title')}</h2>
       <div className="grid grid-cols-2 gap-4">
         {/* Recording Path */}
         <div className="form-control">
           <label className="label">
-            <span className="label-text text-base-content">Recording Path</span>
+            <span className="label-text text-base-content">
+              {t('settings.storage.recordingPath')}
+            </span>
           </label>
           <div className="flex space-x-2">
             <div className="join w-full">
@@ -176,14 +183,14 @@ export default function StorageSettingsSection({
                   }
                 }}
                 onKeyDown={blurOnEnter}
-                placeholder="Enter or select folder path"
+                placeholder={t('settings.storage.folderPlaceholder')}
                 className="input input-bordered flex-1 bg-base-200 join-item"
               />
               <button
                 onClick={handleBrowseClick}
                 className="btn btn-secondary bg-base-200 hover:bg-base-300 border-base-400 hover:border-base-400 font-semibold join-item"
               >
-                Browse
+                {t('settings.storage.browse')}
               </button>
             </div>
           </div>
@@ -192,7 +199,7 @@ export default function StorageSettingsSection({
         {/* Cache Folder Path */}
         <div className="form-control">
           <label className="label">
-            <span className="label-text text-base-content">Cache Path</span>
+            <span className="label-text text-base-content">{t('settings.storage.cachePath')}</span>
           </label>
           <div className="flex space-x-2">
             <div className="join w-full">
@@ -207,14 +214,14 @@ export default function StorageSettingsSection({
                   }
                 }}
                 onKeyDown={blurOnEnter}
-                placeholder="Enter or select folder for metadata"
+                placeholder={t('settings.storage.cachePlaceholder')}
                 className="input input-bordered flex-1 bg-base-200 join-item"
               />
               <button
                 onClick={handleCacheBrowseClick}
                 className="btn btn-secondary bg-base-200 hover:bg-base-300 border-base-400 hover:border-base-400 font-semibold join-item"
               >
-                Browse
+                {t('settings.storage.browse')}
               </button>
             </div>
           </div>
@@ -223,7 +230,9 @@ export default function StorageSettingsSection({
         {/* Storage Limit */}
         <div className="form-control">
           <label className="label block px-0">
-            <span className="label-text text-base-content">Storage Limit</span>
+            <span className="label-text text-base-content">
+              {t('settings.storage.storageLimit')}
+            </span>
           </label>
 
           <div className="relative w-full">
@@ -233,7 +242,7 @@ export default function StorageSettingsSection({
               value={localStorageLimit}
               onChange={(e) => setLocalStorageLimit(e.target.value)}
               onBlur={handleStorageLimitBlur}
-              placeholder="Set maximum storage in GB"
+              placeholder={t('settings.storage.limitPlaceholder')}
               min="1"
               className="input input-bordered bg-base-200 w-full block pr-12 outline-none focus:border-base-400"
             />
@@ -265,9 +274,11 @@ export default function StorageSettingsSection({
             className="checkbox checkbox-primary checkbox-sm"
           />
           <div>
-            <div className="font-semibold">Delete Original After Compression</div>
+            <div className="font-semibold">
+              {t('settings.storage.deleteOriginalAfterCompression')}
+            </div>
             <div className="text-sm opacity-70 mt-0.5">
-              Removes the full-size video once its compressed copy is saved.
+              {t('settings.storage.deleteOriginalAfterCompressionDesc')}
             </div>
           </div>
         </label>
@@ -280,10 +291,11 @@ export default function StorageSettingsSection({
             className="checkbox checkbox-primary checkbox-sm"
           />
           <div>
-            <div className="font-semibold">Discard Sessions Without Bookmarks</div>
+            <div className="font-semibold">
+              {t('settings.storage.discardSessionsWithoutBookmarks')}
+            </div>
             <div className="text-sm opacity-70 mt-0.5">
-              Deletes a session recording when it ends unless you added a bookmark with the hotkey.
-              Kills and other automatic bookmarks don&apos;t count.
+              {t('settings.storage.discardSessionsWithoutBookmarksDesc')}
             </div>
           </div>
         </label>
@@ -314,12 +326,12 @@ export default function StorageSettingsSection({
             <div className="mt-4 flex flex-col gap-3 rounded-lg border border-base-400 bg-base-200 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="text-base-content font-medium">
-                  {outsideCount} video{outsideCount === 1 ? '' : 's'} ({outsideSizeGb.toFixed(2)}{' '}
-                  GB) stored outside your recording path
+                  {t('settings.storage.outsideVideos', {
+                    count: outsideCount,
+                    size: outsideSizeGb.toFixed(2),
+                  })}
                 </p>
-                <p className="text-sm opacity-70">
-                  Move them into your recording path to keep all your content in one place.
-                </p>
+                <p className="text-sm opacity-70">{t('settings.storage.outsideVideosDesc')}</p>
               </div>
               <Button
                 variant="primary"
@@ -329,7 +341,9 @@ export default function StorageSettingsSection({
               >
                 {!isMigrating && <FolderInput size={16} className="shrink-0" />}
                 <span className="inline-block">
-                  {isMigrating ? 'Moving...' : 'Move to Recording Path'}
+                  {isMigrating
+                    ? t('settings.storage.movingToRecordingPath')
+                    : t('settings.storage.moveToRecordingPath')}
                 </span>
               </Button>
             </div>

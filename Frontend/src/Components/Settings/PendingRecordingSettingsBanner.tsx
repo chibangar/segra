@@ -1,8 +1,10 @@
 import { Info } from 'lucide-react';
 import { usePendingRecordingSettings } from '../../Hooks/usePendingRecordingSettings';
+import { useI18n } from '../../Context/I18nContext';
 
 // Shown while a recording runs with settings that were changed after it started
 export default function PendingRecordingSettingsBanner() {
+  const { t } = useI18n();
   const hasPendingChanges = usePendingRecordingSettings();
   if (!hasPendingChanges) return null;
 
@@ -12,10 +14,7 @@ export default function PendingRecordingSettingsBanner() {
       role="status"
     >
       <Info className="h-5 w-5 shrink-0 text-warning" />
-      <span className="min-w-0 flex-1">
-        Some changes will apply from the next recording. The current recording keeps the settings it
-        started with.
-      </span>
+      <span className="min-w-0 flex-1">{t('settings.pendingRecordingSettings')}</span>
     </div>
   );
 }

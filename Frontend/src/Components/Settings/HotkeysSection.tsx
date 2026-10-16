@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Settings as SettingsType, HotkeyAction } from '../../Models/types';
 import { sendMessageToBackend } from '../../Utils/MessageUtils';
+import { useI18n } from '../../Context/I18nContext';
+
 interface HotkeysSectionProps {
   settings: SettingsType;
   updateSettings: (updates: Partial<SettingsType>) => void;
@@ -51,25 +53,25 @@ export const getKeyName = (keyCode: number): string => {
   return keyMap[keyCode] || `Key(${keyCode})`;
 };
 
-const getActionLabel = (action: HotkeyAction): string => {
+const getActionLabel = (action: HotkeyAction, t: (key: string) => string): string => {
   switch (action) {
     case HotkeyAction.CreateBookmark:
-      return 'Create Bookmark';
+      return t('settings.hotkeys.createBookmark');
     case HotkeyAction.SaveReplayBuffer:
-      return 'Save Replay Buffer';
+      return t('settings.hotkeys.saveReplayBuffer');
     case HotkeyAction.ToggleRecording:
-      return 'Start / Stop Recording';
+      return t('settings.hotkeys.toggleRecording');
     case HotkeyAction.TogglePreview:
-      return 'Toggle Recording Preview';
+      return t('settings.hotkeys.togglePreview');
     default:
       return action;
   }
 };
 
-const getActionHint = (action: HotkeyAction): string | null => {
+const getActionHint = (action: HotkeyAction, t: (key: string) => string): string | null => {
   switch (action) {
     case HotkeyAction.ToggleRecording:
-      return 'Records your display, or stops any active recording.';
+      return t('settings.hotkeys.toggleRecordingHint');
     default:
       return null;
   }
@@ -89,6 +91,7 @@ const getActionRank = (action: HotkeyAction): number => {
 };
 
 export default function HotkeysSection({ settings, updateSettings }: HotkeysSectionProps) {
+  const { t } = useI18n();
   const [capturing, setCapturing] = useState<number | null>(null);
   const [pressedKeys, setPressedKeys] = useState<number[]>([]);
   const isCapturing = capturing !== null;
@@ -158,7 +161,7 @@ export default function HotkeysSection({ settings, updateSettings }: HotkeysSect
 
   return (
     <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
-      <h2 className="text-xl font-semibold mb-4">Hotkeys</h2>
+      <h2 className="text-xl font-semibold mb-4">{t('settings.hotkeys.title')}</h2>
       <div className="flex flex-col gap-3">
         {orderedHotkeys.map(({ hotkey, index }) => (
           <div
@@ -180,9 +183,11 @@ export default function HotkeysSection({ settings, updateSettings }: HotkeysSect
                 className="checkbox checkbox-primary checkbox-sm"
               />
               <div>
-                <div className="font-semibold">{getActionLabel(hotkey.action)}</div>
-                {getActionHint(hotkey.action) && (
-                  <div className="text-sm opacity-70 mt-0.5">{getActionHint(hotkey.action)}</div>
+                <div className="font-semibold">{getActionLabel(hotkey.action, t as any)}</div>
+                {getActionHint(hotkey.action, t as any) && (
+                  <div className="text-sm opacity-70 mt-0.5">
+                    {getActionHint(hotkey.action, t as any)}
+                  </div>
                 )}
               </div>
             </label>
@@ -195,7 +200,7 @@ export default function HotkeysSection({ settings, updateSettings }: HotkeysSect
               }}
             >
               {capturing === index
-                ? 'Press Keys...'
+                ? t('settings.hotkeys.pressKeys')
                 : hotkey.keys.map((key) => getKeyName(key)).join(' + ')}
             </button>
           </div>

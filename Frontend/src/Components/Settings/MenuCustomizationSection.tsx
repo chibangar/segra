@@ -21,6 +21,7 @@ import {
   Settings as SettingsType,
 } from '../../Models/types';
 import { useAppState } from '../../Context/AppStateContext';
+import { useI18n } from '../../Context/I18nContext';
 
 interface MenuCustomizationSectionProps {
   settings: SettingsType;
@@ -35,6 +36,23 @@ const MENU_ICONS: Record<MenuItemId, LucideIcon> = {
   Clips: Clapperboard,
   Highlights: Crown,
   Settings: SettingsIcon,
+};
+
+const getMenuItemLabel = (id: MenuItemId, t: (key: string) => string) => {
+  switch (id) {
+    case 'Full Sessions':
+      return t('menu.fullSessions');
+    case 'Replay Buffer':
+      return t('menu.buffer');
+    case 'Clips':
+      return t('menu.clips');
+    case 'Highlights':
+      return t('menu.highlights');
+    case 'Settings':
+      return t('menu.settings');
+    default:
+      return id;
+  }
 };
 
 interface RowProps {
@@ -60,6 +78,7 @@ const MenuRow: React.FC<RowProps> = ({
   onToggleVisible,
   onSetDefault,
 }) => {
+  const { t } = useI18n();
   const Icon = MENU_ICONS[item.id];
   const isSettings = item.id === 'Settings';
   const [visibilityCooldown, setVisibilityCooldown] = useState(false);
@@ -136,15 +155,15 @@ const MenuRow: React.FC<RowProps> = ({
           <GripVertical className="w-4 h-4" />
         </button>
         <Icon className="w-5 h-5 text-base-content/80 shrink-0" />
-        <span className="font-medium truncate">{item.id}</span>
+        <span className="font-medium truncate">{getMenuItemLabel(item.id, t as any)}</span>
       </div>
 
       <div className="flex items-center gap-2">
         {forceShownReason === 'content' && (
           <div
             className="tooltip tooltip-warning inline-flex p-1.5 text-warning [&::before]:delay-200 [&::after]:delay-200"
-            data-tip="Still shown in the sidebar because it has videos"
-            aria-label="Still shown in the sidebar because it has videos"
+            data-tip={t('settings.menuCustomization.stillShownVideos')}
+            aria-label={t('settings.menuCustomization.stillShownVideos')}
           >
             <AlertTriangle className="w-4 h-4" />
           </div>
@@ -153,15 +172,15 @@ const MenuRow: React.FC<RowProps> = ({
           className="tooltip tooltip-primary inline-flex [&::before]:delay-200 [&::after]:delay-200"
           data-tip={
             isDefault
-              ? 'Opens on Launch'
+              ? t('settings.menuCustomization.opensOnLaunch')
               : !item.visible && !isSettings
-                ? "Hidden Pages Can't Open on Launch"
-                : 'Open on Launch'
+                ? t('settings.menuCustomization.hiddenCantOpen')
+                : t('settings.menuCustomization.openOnLaunch')
           }
         >
           <button
             type="button"
-            aria-label="Open on launch"
+            aria-label={t('settings.menuCustomization.openOnLaunch')}
             aria-pressed={isDefault}
             onClick={() => onSetDefault(item.id)}
             disabled={(!item.visible && !isSettings) || isDefault}
@@ -181,12 +200,20 @@ const MenuRow: React.FC<RowProps> = ({
         <div
           className="tooltip tooltip-primary inline-flex [&::before]:delay-200 [&::after]:delay-200"
           data-tip={
-            isSettings ? 'Always Shown' : item.visible ? 'Hide from Sidebar' : 'Show in Sidebar'
+            isSettings
+              ? t('settings.menuCustomization.alwaysShown')
+              : item.visible
+                ? t('settings.menuCustomization.hideFromSidebar')
+                : t('settings.menuCustomization.showInSidebar')
           }
         >
           <button
             type="button"
-            aria-label={item.visible || isSettings ? 'Hide from sidebar' : 'Show in sidebar'}
+            aria-label={
+              item.visible || isSettings
+                ? t('settings.menuCustomization.hideFromSidebar')
+                : t('settings.menuCustomization.showInSidebar')
+            }
             onClick={handleToggleVisible}
             disabled={isSettings}
             className={`p-1.5 rounded transition-colors ${
@@ -214,6 +241,7 @@ export default function MenuCustomizationSection({
   settings,
   updateSettings,
 }: MenuCustomizationSectionProps) {
+  const { t } = useI18n();
   const appState = useAppState();
   const defaultItem = settings.defaultMenuItem ?? 'Full Sessions';
 
@@ -287,10 +315,8 @@ export default function MenuCustomizationSection({
 
   return (
     <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
-      <h2 className="text-xl font-semibold mb-1">Sidebar Menu</h2>
-      <p className="text-sm opacity-70 mb-4">
-        Drag to reorder. Pick which page opens on launch. Hide items you don&apos;t use.
-      </p>
+      <h2 className="text-xl font-semibold mb-1">{t('settings.menuCustomization.title')}</h2>
+      <p className="text-sm opacity-70 mb-4">{t('settings.menuCustomization.description')}</p>
       <div className="space-y-2 max-w-md">
         {localItems.map((item, index) => {
           const forceShownReason: 'content' | null =

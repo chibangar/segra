@@ -5,6 +5,7 @@ import { FolderOpen, Plus } from 'lucide-react';
 import Button from './Button';
 import ConfirmationModal from './ConfirmationModal';
 import { useSettings } from '../Context/SettingsContext';
+import { useI18n } from '../Context/I18nContext';
 
 export interface CustomGameResult {
   name: string;
@@ -30,6 +31,7 @@ interface SelectedExecutable {
 }
 
 export default function CustomGameModal({ onSave, onClose, initialName }: CustomGameModalProps) {
+  const { t } = useI18n();
   const settings = useSettings();
   const [selectedExes, setSelectedExes] = useState<SelectedExecutable[]>([]);
   const [customGameName, setCustomGameName] = useState(initialName ?? '');
@@ -128,15 +130,15 @@ export default function CustomGameModal({ onSave, onClose, initialName }: Custom
   if (pathPendingRemoval) {
     return (
       <ConfirmationModal
-        title="Remove executable?"
+        title={t('modals.customGame.removeExeTitle')}
         description={
           <>
-            Remove this executable from the custom game?
+            {t('modals.customGame.removeExeDesc')}
             <br />
             <span className="text-sm text-gray-400 break-all">{pathPendingRemoval}</span>
           </>
         }
-        confirmText="Remove"
+        confirmText={t('common.remove')}
         onConfirm={() => {
           setSelectedExes((prev) => prev.filter((e) => e.path !== pathPendingRemoval));
           setPathPendingRemoval(null);
@@ -161,16 +163,18 @@ export default function CustomGameModal({ onSave, onClose, initialName }: Custom
           </Button>
         </div>
         <div className="modal-body pt-8">
-          <h3 className="font-bold text-2xl mb-6">Add Custom Game</h3>
+          <h3 className="font-bold text-2xl mb-6">{t('modals.customGame.title')}</h3>
 
           <div className="form-control w-full mb-4">
             <label className="label">
-              <span className="label-text text-base-content">Game Name</span>
+              <span className="label-text text-base-content">
+                {t('modals.customGame.gameName')}
+              </span>
             </label>
             <input
               type="text"
               className="input input-bordered bg-base-300 w-full focus:outline-none"
-              placeholder="Enter game name..."
+              placeholder={t('modals.customGame.enterGameName')}
               value={customGameName}
               onChange={(e) => {
                 setNameEdited(true);
@@ -181,7 +185,9 @@ export default function CustomGameModal({ onSave, onClose, initialName }: Custom
 
           <div className="form-control w-full">
             <label className="label">
-              <span className="label-text text-base-content">Executables</span>
+              <span className="label-text text-base-content">
+                {t('modals.customGame.executables')}
+              </span>
             </label>
             <Button
               variant="primary"
@@ -190,7 +196,9 @@ export default function CustomGameModal({ onSave, onClose, initialName }: Custom
               disabled={isSelectingFile}
             >
               <FolderOpen size={18} />
-              {isSelectingFile ? 'Selecting...' : 'Browse Executable'}
+              {isSelectingFile
+                ? t('modals.customGame.selecting')
+                : t('modals.customGame.browseExecutable')}
             </Button>
 
             {selectedExes.length > 0 && (
@@ -223,7 +231,7 @@ export default function CustomGameModal({ onSave, onClose, initialName }: Custom
             disabled={!customGameName.trim() || selectedExes.length === 0}
           >
             <Plus className="w-5 h-5" />
-            Add Game
+            {t('modals.customGame.addGame')}
           </Button>
         </div>
       </div>

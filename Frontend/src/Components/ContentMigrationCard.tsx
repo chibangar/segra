@@ -1,20 +1,26 @@
 import type { ContentMigrationProgress } from '../Context/ContentMigrationContext';
+import { useI18n } from '../Context/I18nContext';
 
 interface ContentMigrationCardProps {
   migration: ContentMigrationProgress;
 }
 
 export default function ContentMigrationCard({ migration }: ContentMigrationCardProps) {
+  const { t } = useI18n();
+
   const getStatusText = () => {
     switch (migration.status) {
       case 'migrating':
-        return `Moving ${migration.currentFileIndex} of ${migration.totalFiles}`;
+        return t('cards.migrationCard.movingCount', {
+          current: migration.currentFileIndex,
+          total: migration.totalFiles,
+        });
       case 'done':
-        return migration.message || 'Move Complete';
+        return migration.message || t('cards.migrationCard.moveComplete');
       case 'error':
-        return migration.message || 'Move Error';
+        return migration.message || t('cards.migrationCard.moveError');
       default:
-        return 'Moving...';
+        return t('cards.migrationCard.movingDefault');
     }
   };
 

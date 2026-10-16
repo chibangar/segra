@@ -9,6 +9,7 @@ import { useAppState } from '../Context/AppStateContext';
 import { sendMessageToBackend } from '../Utils/MessageUtils';
 import Button from './Button';
 import DropdownSelect from './DropdownSelect';
+import { useI18n } from '../Context/I18nContext';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -18,6 +19,7 @@ interface RecordingCardProps {
 }
 
 const RecordingCard: React.FC<RecordingCardProps> = ({ recording, preRecording }) => {
+  const { t } = useI18n();
   const timerRef = useRef<HTMLSpanElement>(null);
   const previewImgRef = useRef<HTMLImageElement>(null);
   const settings = useSettings();
@@ -45,10 +47,10 @@ const RecordingCard: React.FC<RecordingCardProps> = ({ recording, preRecording }
   const isDisplayCapture = !!recording && captureMode === 'display';
   const captureTooltip =
     captureMode === 'game'
-      ? 'Game capture (using game hook)'
+      ? t('cards.recording.gameCaptureTooltip')
       : captureMode === 'window'
-        ? 'Window capture (game hook unavailable)'
-        : 'Display capture (not using game hook)';
+        ? t('cards.recording.windowCaptureTooltip')
+        : t('cards.recording.displayCaptureTooltip');
   const captureTooltipColor = captureMode === 'game' ? 'tooltip-success' : 'tooltip-warning';
   const CaptureIcon =
     captureMode === 'game' ? Gamepad2 : captureMode === 'window' ? AppWindow : Monitor;
@@ -262,7 +264,7 @@ const RecordingCard: React.FC<RecordingCardProps> = ({ recording, preRecording }
               className={`w-3 h-3 shrink-0 mb-0.5 rounded-full mr-1.5 ${preRecording ? 'bg-orange-500' : 'bg-red-500'}`}
             ></span>
             <span className="text-gray-200 text-sm font-medium">
-              {preRecording ? preRecording.status : 'Recording'}
+              {preRecording ? preRecording.status : t('cards.recording.recording')}
             </span>
             {!preRecording && (
               <div
@@ -328,7 +330,7 @@ const RecordingCard: React.FC<RecordingCardProps> = ({ recording, preRecording }
                       }}
                     >
                       <Ban size={20} />
-                      <span>Add to Block List</span>
+                      <span>{t('cards.recording.addToBlockList')}</span>
                     </Button>
                   </li>
                 </ul>
