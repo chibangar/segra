@@ -1,0 +1,328 @@
+using Serilog;
+using System.Text.Json;
+using Segra.Backend.App;
+using Segra.Backend.Core;
+using Segra.Backend.Shared;
+using Segra.Backend.Core.Models;
+using Segra.Backend.Windows.Storage;
+
+namespace Segra.Backend.Media
+{
+    public static class ImportService
+    {
+        public static async Task HandleImportFile(JsonElement parameters)
+        {
+            using var work = BackgroundWork.Begin();
+            int importId = Guid.NewGuid().GetHashCode();
+
+            try
+            {
+                if (!parameters.TryGetProperty("sectionId", out JsonElement sectionIdElement))
+                {
+                    Log.Error("sectionId not found in ImportFile parameters");
+                    await MessageService.ShowModal("Import Error", "Missing section ID parameter", "error");
+                    return;
+                }
+
+                string sectionId = sectionIdElement.GetString()!;
+                Content.ContentType contentType;
+
+                switch (sectionId)
+                {
+                    case "sessions":
+                        contentType = Content.ContentType.Session;
+                        break;
+                    case "replayBuffer":
+                        contentType = Content.ContentType.Buffer;
+                        break;
+                    default:
+                        Log.Error($"Invalid sectionId: {sectionId}");
+                        await MessageService.ShowModal("Import Error", $"Invalid section ID: {sectionId}", "error");
+                        return;
+                }
+
+                // The platform dialog runs on its own thread (STA on Windows / zenity on Linux).
+                string[]? selectedFiles = await Platform.PlatformServices.Dialogs.PickFilesAsync(
+                    "Import MP4 Video Files", "MP4 Video Files (*.mp4)", "mp4");
+
+                if (selectedFiles == null || selectedFiles.Length == 0)
+                {
+                    Log.Information("Import cancelled by user or no files selected");
+                    return;
+                }
+
+                Log.Information($"Starting import of {selectedFiles.Length} file(s) to {contentType}");
+
+                bool shouldProceed = await StorageWarningService.CheckImportStorageLimit(selectedFiles, contentType);
+                if (!shouldProceed)
+                {
+                    // Warning was sent to frontend, waiting for user confirmation
+                    return;
+                }
+
+                await ExecuteImport(selectedFiles, contentType);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error during import process: {ex.Message}");
+
+                try
+                {
+                    await MessageService.SendFrontendMessage("ImportProgress", new
+                    {
+                        id = importId,
+                        progress = 0,
+                        fileName = "Import Failed",
+                        totalFiles = 0,
+                        currentFileIndex = 0,
+                        status = "error",
+                        message = $"Import process failed: {ex.Message}"
+                    });
+                }
+                catch (Exception msgEx)
+                {
+                    Log.Warning($"Failed to send import error message: {msgEx.Message}");
+                }
+
+                await MessageService.ShowModal("Import Error", $"An error occurred during import: {ex.Message}", "error");
+            }
+        }
+
+        /// <summary>
+        /// Executes the actual import of files
+        /// </summary>
+        public static async Task ExecuteImport(string[] selectedFiles, Content.ContentType contentType)
+        {
+            using var work = BackgroundWork.Begin();
+            int importId = Guid.NewGuid().GetHashCode();
+
+            string contentFolder = Settings.Instance.ContentFolder;
+            string baseTypeFolder = PathUtils.Combine(contentFolder, FolderNames.GetVideoFolderName(contentType));
+
+            int importedCount = 0;
+            int failedCount = 0;
+
+            for (int i = 0; i < selectedFiles.Length; i++)
+            {
+                string sourceFile = selectedFiles[i];
+                string originalFileName = Path.GetFileNameWithoutExtension(sourceFile);
+                string fileExtension = Path.GetExtension(sourceFile);
+
+                if (!fileExtension.Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                {
+                    failedCount++;
+                    Log.Error($"Skipping {originalFileName}: Only MP4 files are allowed");
+                    continue;
+                }
+
+                try
+                {
+                    var embedded = await EmbeddedMetadataService.ReadAsync(sourceFile);
+                    string game = !string.IsNullOrEmpty(embedded?.Game) ? embedded.Game : "Unknown";
+                    string targetFolder = PathUtils.Combine(baseTypeFolder, StorageService.SanitizeGameNameForFolder(game));
+                    Directory.CreateDirectory(targetFolder);
+
+                    double progressPercent = (double)i / selectedFiles.Length * 100;
+                    try
+                    {
+                        await MessageService.SendFrontendMessage("ImportProgress", new
+                        {
+                            id = importId,
+                            progress = progressPercent,
+                            fileName = originalFileName,
+                            totalFiles = selectedFiles.Length,
+                            currentFileIndex = i + 1,
+                            status = "importing"
+                        });
+                    }
+                    catch (Exception msgEx)
+                    {
+                        Log.Warning($"Failed to send import progress message: {msgEx.Message}");
+                    }
+
+                    string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                    string targetFileName = $"{timestamp}_{originalFileName}{fileExtension}";
+                    string targetFilePath = PathUtils.Combine(targetFolder, targetFileName);
+
+                    int counter = 1;
+                    while (File.Exists(targetFilePath))
+                    {
+                        targetFileName = $"{timestamp}_{originalFileName}_{counter}{fileExtension}";
+                        targetFilePath = PathUtils.Combine(targetFolder, targetFileName);
+                        counter++;
+                    }
+
+                    Log.Information($"Importing {originalFileName} to {targetFilePath}");
+
+                    File.Copy(sourceFile, targetFilePath);
+
+                    DateTime recordingDate = File.GetCreationTime(sourceFile);
+
+                    // Probe audio track layout so the multi-track player UI
+                    // activates for imported recordings that carry more than
+                    // one audio stream. Primary probe: walk the MP4 box tree
+                    // directly (catches OBS's custom `trak/udta/name` atoms,
+                    // which ffmpeg's mov demuxer doesn't surface). Fallback
+                    // probe: parse `ffmpeg -i` stderr for standard `title` /
+                    // non-generic `handler_name` tags on tracks the MP4 box
+                    // walker didn't find a name for.
+                    List<string>? audioTrackNames = null;
+                    var rawNames = await Mp4BoxReader.ReadAudioTrackNamesAsync(sourceFile);
+                    if (rawNames != null)
+                    {
+                        bool anyUnnamed = rawNames.Exists(n => string.IsNullOrWhiteSpace(n));
+                        if (anyUnnamed)
+                        {
+                            try
+                            {
+                                string probeOutput = await FFmpegService.GetMetadata(sourceFile);
+                                var ffmpegNames = FFmpegService.ExtractAudioTrackNames(probeOutput);
+                                if (ffmpegNames != null)
+                                {
+                                    int common = Math.Min(ffmpegNames.Count, rawNames.Count);
+                                    for (int t = 0; t < common; t++)
+                                    {
+                                        if (string.IsNullOrWhiteSpace(rawNames[t]) && !string.IsNullOrWhiteSpace(ffmpegNames[t]))
+                                        {
+                                            rawNames[t] = ffmpegNames[t];
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception probeEx)
+                            {
+                                Log.Warning($"FFmpeg track-name fallback failed for {originalFileName}: {probeEx.Message}");
+                            }
+                        }
+
+                        audioTrackNames = new List<string>(rawNames.Count);
+                        for (int t = 0; t < rawNames.Count; t++)
+                        {
+                            string? name = rawNames[t];
+                            audioTrackNames.Add(string.IsNullOrWhiteSpace(name) ? $"Track {t + 1}" : name!);
+                        }
+                        Log.Information($"Detected {audioTrackNames.Count} audio tracks in {originalFileName}: {string.Join(", ", audioTrackNames)}");
+                    }
+
+                    try
+                    {
+                        await MessageService.SendFrontendMessage("ImportProgress", new
+                        {
+                            id = importId,
+                            progress = progressPercent + (25.0 / selectedFiles.Length),
+                            fileName = originalFileName,
+                            totalFiles = selectedFiles.Length,
+                            currentFileIndex = i + 1,
+                            status = "importing"
+                        });
+                    }
+                    catch (Exception msgEx)
+                    {
+                        Log.Warning($"Failed to send import progress message: {msgEx.Message}");
+                    }
+
+                    if (embedded != null)
+                    {
+                        Log.Information($"Restored embedded metadata from {originalFileName}: {game}, {embedded.Bookmarks.Count} bookmarks");
+                    }
+
+                    string title = embedded != null ? embedded.Title ?? string.Empty : originalFileName.Replace("_", " ");
+                    DateTime? createdAt = embedded?.CreatedAt ?? (recordingDate != DateTime.MinValue ? recordingDate : null);
+                    string? importedId = await ContentService.CreateMetadataFile(targetFilePath, contentType, game, embedded?.Bookmarks, title, createdAt, embedded?.IgdbId, isImported: true,
+                        audioTrackNames: embedded?.AudioTrackNames ?? audioTrackNames, audioTrackTypes: embedded?.AudioTrackTypes, compressed: embedded?.Compressed ?? false, gameExePath: embedded?.GameExePath);
+
+                    // Ensure file is fully written to disk/network before thumbnail generation
+                    await GeneralUtils.EnsureFileReady(targetFilePath);
+
+                    try
+                    {
+                        await MessageService.SendFrontendMessage("ImportProgress", new
+                        {
+                            id = importId,
+                            progress = progressPercent + (50.0 / selectedFiles.Length),
+                            fileName = originalFileName,
+                            totalFiles = selectedFiles.Length,
+                            currentFileIndex = i + 1,
+                            status = "importing"
+                        });
+                    }
+                    catch (Exception msgEx)
+                    {
+                        Log.Warning($"Failed to send import progress message: {msgEx.Message}");
+                    }
+
+                    await ContentService.CreateThumbnail(targetFilePath, contentType, importedId);
+
+                    try
+                    {
+                        await MessageService.SendFrontendMessage("ImportProgress", new
+                        {
+                            id = importId,
+                            progress = progressPercent + (75.0 / selectedFiles.Length),
+                            fileName = originalFileName,
+                            totalFiles = selectedFiles.Length,
+                            currentFileIndex = i + 1,
+                            status = "importing"
+                        });
+                    }
+                    catch (Exception msgEx)
+                    {
+                        Log.Warning($"Failed to send import progress message: {msgEx.Message}");
+                    }
+
+                    _ = Task.Run(async () => await ContentService.CreateWaveformFile(targetFilePath, contentType, importedId));
+
+                    importedCount++;
+                    Log.Information($"Successfully imported {originalFileName}");
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    Log.Error(ex, $"Failed to import {originalFileName}");
+
+                    double progressPercent = (double)i / selectedFiles.Length * 100;
+                    try
+                    {
+                        await MessageService.SendFrontendMessage("ImportProgress", new
+                        {
+                            id = importId,
+                            progress = progressPercent + (100.0 / selectedFiles.Length),
+                            fileName = originalFileName,
+                            totalFiles = selectedFiles.Length,
+                            currentFileIndex = i + 1,
+                            status = "error",
+                            message = $"Failed to import: {ex.Message}"
+                        });
+                    }
+                    catch (Exception msgEx)
+                    {
+                        Log.Warning($"Failed to send import error progress message: {msgEx.Message}");
+                    }
+                }
+            }
+
+            try
+            {
+                await MessageService.SendFrontendMessage("ImportProgress", new
+                {
+                    id = importId,
+                    progress = 100,
+                    fileName = importedCount > 0 ? "Finished" : "Failed",
+                    totalFiles = selectedFiles.Length,
+                    currentFileIndex = selectedFiles.Length,
+                    status = importedCount > 0 ? "done" : "error",
+                    message = $"Completed: {importedCount} successful, {failedCount} failed"
+                });
+            }
+            catch (Exception msgEx)
+            {
+                Log.Warning($"Failed to send final import progress message: {msgEx.Message}");
+            }
+
+            await SettingsService.LoadContentFromFolderIntoState();
+
+            // No need for completion modal since progress cards show completion status
+            Log.Information($"Import process completed: {importedCount} successful, {failedCount} failed");
+        }
+    }
+}

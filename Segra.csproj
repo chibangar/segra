@@ -1,0 +1,192 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Multi-target: the Windows TFM keeps WinForms/WinRT/DirectX; the plain net10.0 TFM
+       builds for Linux. Windows-only source files and packages are gated by TFM below. -->
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
+    <Platforms>x64</Platforms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+    <GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>
+    <GenerateAssemblyFileVersionAttribute>true</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInformationalVersionAttribute>true</GenerateAssemblyInformationalVersionAttribute>
+    <GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+    <GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
+    <GenerateAssemblyVersionAttribute>true</GenerateAssemblyVersionAttribute>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <!-- Generate embedded file manifest when using the Photino.NET StaticFileServer -->
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageIcon>icon.png</PackageIcon>
+    <AssemblyName>Segra</AssemblyName>
+    <RootNamespace>Segra</RootNamespace>
+    <!-- Needed so the Windows dev box can restore/build the net10.0-windows TFM. Harmless on Linux. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- Exclude leftover build output from the removed Inspector sub-project. Its generated
+         AssemblyInfo.cs sits under this project folder and would otherwise be globbed into
+         this compilation, leaking a duplicate AssemblyVersion (and masking the real version). -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Inspector\**;HotkeyBroker\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <!-- Windows-only build settings -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <OutputType>WinExe</OutputType>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
+
+  <!-- Builds made outside GitHub Actions never auto update -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' != 'true'">
+    <DefineConstants>$(DefineConstants);LOCAL_BUILD</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Linux-only build settings -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifiers>linux-x64</RuntimeIdentifiers>
+    <DefineConstants>$(DefineConstants);LINUX</DefineConstants>
+    <!-- System.Drawing.Common compiles cross-platform (throws only at runtime off-Windows, which
+         the existing try/catch call sites handle), so Resources.Designer.cs and IconUtils build
+         unchanged. CA1416 (platform-compat) warnings for those unreachable paths are expected. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <!-- Cross-platform packages (both TFMs) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.12" />
+    <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
+    <PackageReference Include="PhotinoX" Version="5.3.5" />
+    <PackageReference Include="Serilog" Version="4.4.0" />
+    <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+    <PackageReference Include="ObsKit.NET" Version="1.6.1" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+  </ItemGroup>
+
+  <!-- Windows-only packages (NAudio/WASAPI, WMI, DirectX) -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <PackageReference Include="NAudio" Version="3.1.0" />
+    <PackageReference Include="System.Management" Version="10.0.12" />
+    <PackageReference Include="Vortice.DirectX" Version="3.8.3" />
+  </ItemGroup>
+
+  <!-- Linux needs System.Drawing.Common (Windows gets it via WinForms) and
+       System.Resources.Extensions for the non-string (icon/bitmap) resx resources. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="System.Drawing.Common" Version="10.0.12" />
+    <PackageReference Include="System.Resources.Extensions" Version="10.0.12" />
+  </ItemGroup>
+
+  <!-- Windows-only source files (WASAPI/WMI/WinForms/WinRT/registry/DirectX). Excluded from the
+       Linux compile; their call sites are guarded by #if WINDOWS or routed through Backend/Platform. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <Compile Remove="Backend\Windows\Audio\AudioDeviceService.cs" />
+    <Compile Remove="Backend\Windows\Watchers\AudioDeviceWatcher.cs" />
+    <Compile Remove="Backend\Windows\Watchers\DisplayWatcher.cs" />
+    <Compile Remove="Backend\Windows\Display\DisplayService.cs" />
+    <Compile Remove="Backend\Windows\Display\HdrDetectionService.cs" />
+    <Compile Remove="Backend\Windows\Display\WindowUtils.cs" />
+    <Compile Remove="Backend\Windows\Power\PowerModeMonitor.cs" />
+    <Compile Remove="Backend\Windows\WebView2\WebView2RuntimeService.cs" />
+    <Compile Remove="Backend\Windows\Codecs\HevcExtensionInstaller.cs" />
+    <Compile Remove="Backend\App\NotifyIconService.cs" />
+    <Compile Remove="Backend\Recorder\OBSWindow.cs" />
+    <Compile Remove="Backend\Recorder\NvencCapsService.cs" />
+    <Compile Remove="Backend\Games\OcrIntegration.cs" />
+    <Compile Remove="Backend\Games\GrandTheftAuto\GtaIntegration.cs" />
+    <Compile Remove="Backend\Games\RocketLeague\RocketLeagueIntegration.cs" />
+    <Compile Remove="Backend\Games\Wardogs\WardogsIntegration.cs" />
+    <Compile Remove="Backend\Games\Deadlock\DeadlockIntegration.cs" />
+    <Compile Remove="Backend\Games\Battlefield6\Battlefield6Integration.cs" />
+    <Compile Remove="Backend\Games\Valorant\ValorantIntegration.cs" />
+    <Compile Remove="Backend\Games\Overwatch\OverwatchIntegration.cs" />
+    <Compile Remove="Backend\Platform\Windows\**\*.cs" />
+    <Compile Remove="Backend\Windows\Input\HotkeyBroker\**\*.cs" />
+  </ItemGroup>
+
+  <!-- Linux-only platform implementations. Excluded from the Windows compile. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <Compile Remove="Backend\Platform\Linux\**\*.cs" />
+  </ItemGroup>
+
+  <!-- The broker's wire contract and signature check are single files compiled into both binaries. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <Compile Include="HotkeyBroker\Segra.Hotkeys\HotkeyProtocol.cs" Link="HotkeyBroker\HotkeyProtocol.cs" />
+    <Compile Include="HotkeyBroker\Segra.Hotkeys\Authenticode.cs" Link="HotkeyBroker\Authenticode.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\**" Exclude="Resources\wwwroot\**" />
+    <FrontendSourceFiles Include="Frontend\src\**\*;Frontend\public\**\*;Frontend\index.html;Frontend\package.json;Frontend\package-lock.json;Frontend\vite.config.*;Frontend\tsconfig*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Remove="Resources\error.wav" />
+    <EmbeddedResource Remove="Resources\start.wav" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Resources\icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="icon.ico">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <!-- Linux uses the PNG for the Photino window icon (icon.ico is Windows-only). -->
+    <Content Include="icon.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <Target Name="BuildFrontendAssets" Inputs="@(FrontendSourceFiles)" Outputs="Resources\wwwroot\index.html">
+    <Exec WorkingDirectory="Frontend" Command="npm ci" Condition="!Exists('Frontend\node_modules')" />
+    <Exec WorkingDirectory="Frontend" Command="npm run build" />
+    <MakeDir Directories="Resources\wwwroot" />
+    <ItemGroup>
+      <PackagedFrontendFiles Include="Resources\wwwroot\**\*" Exclude="Resources\wwwroot\.gitkeep" />
+      <FrontendDistFiles Include="Frontend\dist\**\*" />
+    </ItemGroup>
+    <Delete Files="@(PackagedFrontendFiles)" />
+    <Copy SourceFiles="@(FrontendDistFiles)" DestinationFiles="@(FrontendDistFiles->'Resources\wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+  <!-- Build the frontend once before the per-TFM builds run in parallel and race on Frontend/dist. -->
+  <Target Name="BuildFrontendAssetsBeforeInnerBuilds" BeforeTargets="DispatchToInnerBuilds" DependsOnTargets="BuildFrontendAssets" />
+
+  <Target Name="IncludeFrontendAssets" BeforeTargets="_CalculateEmbeddedFilesManifestInputs" DependsOnTargets="BuildFrontendAssets">
+    <ItemGroup>
+      <EmbeddedResource Include="Resources\wwwroot\**\*" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="EnsureResourcesBeforeCompile" BeforeTargets="_GenerateCompileInputs" DependsOnTargets="PrepareResources" />
+
+</Project>

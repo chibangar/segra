@@ -1,0 +1,381 @@
+using Serilog;
+using System.Text.Json;
+using Segra.Backend.App;
+using Segra.Backend.Core;
+using Segra.Backend.Media;
+using Segra.Backend.Shared;
+using Segra.Backend.Core.Models;
+using Segra.Backend.Windows.Storage;
+
+namespace Segra.Backend.Recorder
+{
+    internal class RecoveryService
+    {
+        private static readonly Dictionary<string, OrphanedFile> _pendingRecoveries = new();
+        private static readonly Dictionary<string, string> _detectedGames = new();
+
+        public static async Task CheckForOrphanedFilesAsync()
+        {
+            try
+            {
+                // Wait for migrations to complete before checking for orphaned files
+                await MigrationService.WaitForMigrationsAsync();
+                var orphanedFiles = FindOrphanedVideoFiles();
+
+                if (orphanedFiles.Count == 0)
+                    return;
+
+                Log.Information($"Found {orphanedFiles.Count} orphaned video file(s) without metadata");
+
+                foreach (var orphanedFile in orphanedFiles)
+                {
+                    orphanedFile.Embedded = await EmbeddedMetadataService.ReadAsync(orphanedFile.FilePath);
+                }
+
+                var fileDataList = orphanedFiles.Select(orphanedFile =>
+                {
+                    string recoveryId = Guid.NewGuid().ToString();
+                    _pendingRecoveries[recoveryId] = orphanedFile;
+
+                    FileInfo fileInfo = new(orphanedFile.FilePath);
+                    double fileSizeMB = fileInfo.Length / (1024.0 * 1024.0);
+                    string formattedSize = fileSizeMB >= 1024
+                        ? $"{fileSizeMB / 1024.0:F2} GB"
+                        : $"{fileSizeMB:F2} MB";
+
+                    string typeLabel = orphanedFile.Type switch
+                    {
+                        Content.ContentType.Session => "Session Recording",
+                        Content.ContentType.Clip => "Clip",
+                        Content.ContentType.Highlight => "Highlight",
+                        Content.ContentType.Buffer => "Replay Buffer",
+                        _ => orphanedFile.Type.ToString()
+                    };
+
+                    string? detectedGame = !string.IsNullOrEmpty(orphanedFile.Embedded?.Game) ? orphanedFile.Embedded.Game : orphanedFile.FolderGame;
+                    if (!string.IsNullOrEmpty(detectedGame))
+                    {
+                        _detectedGames[recoveryId] = detectedGame;
+                    }
+
+                    return new
+                    {
+                        recoveryId,
+                        fileName = orphanedFile.FileName,
+                        filePath = orphanedFile.FilePath,
+                        type = orphanedFile.Type.ToString(),
+                        typeLabel,
+                        fileSize = formattedSize,
+                        detectedGame
+                    };
+                }).ToList();
+
+                await MessageService.SendFrontendMessage("RecoveryPrompt", new
+                {
+                    files = fileDataList,
+                    totalCount = fileDataList.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error during recovery check: {ex.Message}");
+            }
+        }
+
+        public static async Task HandleRecoveryConfirm(JsonElement parameters)
+        {
+            using var work = BackgroundWork.Begin();
+            try
+            {
+                if (!parameters.TryGetProperty("recoveryId", out JsonElement recoveryIdElement) ||
+                    !parameters.TryGetProperty("action", out JsonElement actionElement))
+                {
+                    Log.Error("Missing required parameters in RecoveryConfirm");
+                    return;
+                }
+
+                string recoveryId = recoveryIdElement.GetString()!;
+                string action = actionElement.GetString()!;
+                string? gameOverride = parameters.TryGetProperty("gameOverride", out JsonElement gameOverrideElement)
+                    ? gameOverrideElement.GetString()
+                    : null;
+
+                if (!_pendingRecoveries.TryGetValue(recoveryId, out OrphanedFile? orphanedFile))
+                {
+                    Log.Warning($"No pending recovery found for recoveryId: {recoveryId}");
+                    return;
+                }
+
+                _pendingRecoveries.Remove(recoveryId);
+                _detectedGames.TryGetValue(recoveryId, out string? detectedGame);
+                _detectedGames.Remove(recoveryId);
+
+                switch (action)
+                {
+                    case "recover":
+                        string? gameName = string.IsNullOrEmpty(gameOverride) ? detectedGame : gameOverride;
+                        await RecoverFile(orphanedFile, gameName);
+                        await SettingsService.LoadContentFromFolderIntoState(true);
+                        break;
+                    case "delete":
+                        DeleteFile(orphanedFile);
+                        break;
+                    case "skip":
+                        Log.Information($"User skipped recovery for: {orphanedFile.FileName}");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error handling recovery confirmation: {ex.Message}");
+            }
+        }
+
+        private static List<OrphanedFile> FindOrphanedVideoFiles()
+        {
+            var orphanedFiles = new List<OrphanedFile>();
+            string contentFolder = Settings.Instance.ContentFolder;
+
+            // Build a lookup from sanitized folder name -> original game name
+            var knownGameNames = AppState.Instance.Content
+                .Where(c => !string.IsNullOrEmpty(c.Game))
+                .Select(c => c.Game)
+                .Concat(Settings.Instance.Games.Select(g => g.Name))
+                .Distinct()
+                .ToList();
+
+            var folderToGameName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var gameName in knownGameNames)
+            {
+                string sanitized = StorageService.SanitizeGameNameForFolder(gameName);
+                folderToGameName.TryAdd(sanitized, gameName);
+            }
+
+            var contentTypes = new[]
+            {
+                Content.ContentType.Session,
+                Content.ContentType.Clip,
+                Content.ContentType.Highlight,
+                Content.ContentType.Buffer
+            };
+
+            foreach (var type in contentTypes)
+            {
+                string videoFolder = PathUtils.Combine(contentFolder, FolderNames.GetVideoFolderName(type));
+                string metadataFolder = FolderNames.GetMetadataFolderPath(type);
+
+                if (!Directory.Exists(videoFolder))
+                    continue;
+
+                // Metadata is named by content id, so a video is orphaned when no metadata file points at it
+                var trackedPaths = ReadTrackedFilePaths(metadataFolder);
+
+                // Search recursively to find files in game subfolders
+                var videoFiles = Directory.GetFiles(videoFolder, "*.mp4", SearchOption.AllDirectories);
+
+                foreach (var videoFile in videoFiles)
+                {
+                    if (!trackedPaths.Contains(PathUtils.Normalize(videoFile)))
+                    {
+                        // Detect game from parent folder name (e.g., "Full Sessions/PUBG/video.mp4" -> "PUBG")
+                        string? folderGame = null;
+                        string? parentDir = Path.GetDirectoryName(videoFile);
+                        if (parentDir != null && !string.Equals(parentDir, videoFolder, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string folderName = Path.GetFileName(parentDir);
+                            // Reverse-lookup: match sanitized folder name back to original game name
+                            folderGame = folderToGameName.TryGetValue(folderName, out string? originalName)
+                                ? originalName
+                                : folderName;
+                        }
+
+                        orphanedFiles.Add(new OrphanedFile
+                        {
+                            FilePath = videoFile,
+                            Type = type,
+                            FileName = Path.GetFileName(videoFile),
+                            FolderGame = folderGame
+                        });
+                    }
+                }
+            }
+
+            return orphanedFiles;
+        }
+
+        private static HashSet<string> ReadTrackedFilePaths(string metadataFolder)
+        {
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!Directory.Exists(metadataFolder))
+                return paths;
+
+            foreach (var metadataFile in Directory.EnumerateFiles(metadataFolder, "*.json", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var metadata = JsonSerializer.Deserialize<Content>(File.ReadAllText(metadataFile));
+                    if (!string.IsNullOrEmpty(metadata?.FilePath))
+                        paths.Add(PathUtils.Normalize(metadata.FilePath));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Failed to read metadata {metadataFile}: {ex.Message}");
+                }
+            }
+
+            return paths;
+        }
+
+        private static async Task RecoverFile(OrphanedFile orphanedFile, string? detectedGame)
+        {
+            int progressId = Guid.NewGuid().GetHashCode();
+            string displayName = Path.GetFileNameWithoutExtension(orphanedFile.FileName);
+            Task SendProgress(double progress, string status, string? message = null) =>
+                MessageService.SendFrontendMessage("ImportProgress", new
+                {
+                    id = progressId,
+                    action = "recover",
+                    progress,
+                    fileName = displayName,
+                    totalFiles = 1,
+                    currentFileIndex = 1,
+                    status,
+                    message
+                });
+
+            try
+            {
+                Log.Information($"Recovering file: {orphanedFile.FileName}");
+                await SendProgress(0, "importing");
+
+                if (EmbeddedMetadataService.IsUnfinishedFragmented(orphanedFile.FilePath))
+                    await RemuxUnfinished(orphanedFile.FilePath, p => _ = SendProgress(p * 90, "importing"));
+
+                string gameName;
+                if (!string.IsNullOrEmpty(detectedGame))
+                {
+                    gameName = detectedGame;
+                    Log.Information($"Using detected game: {gameName}");
+                }
+                else
+                {
+                    gameName = "Unknown";
+                }
+
+                DateTime createdAt = File.GetCreationTime(orphanedFile.FilePath);
+                var embedded = orphanedFile.Embedded;
+                // The game ids only apply when the user kept the embedded game
+                bool sameGame = embedded != null && string.Equals(embedded.Game, gameName, StringComparison.Ordinal);
+
+                string? recoveredId = await ContentService.CreateMetadataFile(
+                    orphanedFile.FilePath,
+                    orphanedFile.Type,
+                    gameName,
+                    embedded?.Bookmarks,
+                    embedded?.Title,
+                    embedded?.CreatedAt ?? (createdAt != DateTime.MinValue ? createdAt : null),
+                    igdbId: sameGame ? embedded!.IgdbId : null,
+                    audioTrackNames: embedded?.AudioTrackNames,
+                    audioTrackTypes: embedded?.AudioTrackTypes,
+                    compressed: embedded?.Compressed ?? false,
+                    gameExePath: sameGame ? embedded!.GameExePath : null
+                );
+
+                await SendProgress(92, "importing");
+                await ContentService.CreateThumbnail(orphanedFile.FilePath, orphanedFile.Type, recoveredId);
+                await SendProgress(95, "importing");
+                await ContentService.CreateWaveformFile(orphanedFile.FilePath, orphanedFile.Type, recoveredId);
+
+                Log.Information($"Successfully recovered: {orphanedFile.FileName}");
+                await SendProgress(100, "done");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to recover file {orphanedFile.FileName}: {ex.Message}");
+                await SendProgress(100, "error", "Recovery failed");
+            }
+        }
+
+        // Lossless copy into a regular MP4 so it gets a duration and seek index; keeps the original if it fails
+        private static async Task RemuxUnfinished(string filePath, Action<double> onProgress)
+        {
+            string tempPath = filePath + ".remux.tmp";
+            using var stopPolling = new CancellationTokenSource();
+            try
+            {
+                Log.Information($"Remuxing unfinished recording: {filePath}");
+                List<string> arguments = ["-y", "-i", filePath, "-map", "0", "-c", "copy"];
+                // Stream copy drops OBS's track names (trak/udta/name), so carry them over as titles
+                var trackNames = await Mp4BoxReader.ReadAudioTrackNamesAsync(filePath);
+                for (int t = 0; t < (trackNames?.Count ?? 0); t++)
+                {
+                    if (!string.IsNullOrWhiteSpace(trackNames![t]))
+                        arguments.AddRange([$"-metadata:s:a:{t}", $"title={trackNames[t]}"]);
+                }
+                arguments.AddRange(["-f", "mp4", tempPath]);
+
+                // A stream copy is about as large as its source, so the output size tracks progress
+                long sourceSize = new FileInfo(filePath).Length;
+                _ = Task.Run(async () =>
+                {
+                    while (true)
+                    {
+                        await Task.Delay(500);
+                        // Checked after the delay so no update lands after the final one
+                        if (stopPolling.IsCancellationRequested)
+                            break;
+                        var temp = new FileInfo(tempPath);
+                        if (temp.Exists && sourceSize > 0)
+                            onProgress(Math.Min(1, (double)temp.Length / sourceSize));
+                    }
+                });
+
+                await FFmpegService.RunSimple(arguments);
+                stopPolling.Cancel();
+                File.Move(tempPath, filePath, overwrite: true);
+                Log.Information($"Remuxed unfinished recording: {filePath}");
+            }
+            catch (Exception ex)
+            {
+                stopPolling.Cancel();
+                Log.Warning($"Could not remux {filePath}, keeping it as is: {ex.Message}");
+                try
+                {
+                    File.Delete(tempPath);
+                }
+                catch (Exception)
+                {
+                    // Best effort
+                }
+            }
+        }
+
+        private static void DeleteFile(OrphanedFile orphanedFile)
+        {
+            try
+            {
+                Log.Information($"Deleting orphaned file: {orphanedFile.FileName}");
+                File.Delete(orphanedFile.FilePath);
+                Log.Information($"Successfully deleted: {orphanedFile.FileName}");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to delete file {orphanedFile.FileName}: {ex.Message}");
+            }
+        }
+
+        private class OrphanedFile
+        {
+            private string _filePath = string.Empty;
+            public required string FilePath
+            {
+                get => _filePath;
+                set => _filePath = PathUtils.Normalize(value ?? string.Empty);
+            }
+            public required Content.ContentType Type { get; set; }
+            public required string FileName { get; set; }
+            public string? FolderGame { get; set; }
+            public EmbeddedMetadata? Embedded { get; set; }
+        }
+    }
+}

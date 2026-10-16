@@ -1,0 +1,67 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // glibc skips LD_LIBRARY_PATH dirs that were missing when first searched
+            "label": "prepare obs-runtime (linux)",
+            "command": "mkdir",
+            "type": "process",
+            "args": [
+                "-p",
+                "${env:HOME}/.config/Segra/obs-runtime/lib"
+            ]
+        },
+        {
+            "label": "build (linux)",
+            "dependsOn": "prepare obs-runtime (linux)",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/Segra.csproj",
+                "-f",
+                "net10.0",
+                "-p:TargetFrameworks=net10.0",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary;ForceNoAlign"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/Segra.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary;ForceNoAlign"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "publish",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "publish",
+                "${workspaceFolder}/Segra.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary;ForceNoAlign"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "watch",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "watch",
+                "run",
+                "--project",
+                "${workspaceFolder}/Segra.csproj"
+            ],
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}

@@ -1,0 +1,138 @@
+import React, { createContext, useContext, useRef, useState, ReactNode } from 'react';
+
+type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl';
+
+interface ModalOptions {
+  size?: ModalSize;
+  onDismiss?: () => void;
+}
+
+interface ModalContextType {
+  openModal: (content: ReactNode, options?: ModalOptions) => void;
+  closeModal: () => void;
+  isModalOpen: boolean;
+}
+
+const ModalContext = createContext<ModalContextType | undefined>(undefined);
+
+const SIZE_CLASS: Record<ModalSize, string> = {
+  sm: 'max-w-sm w-full',
+  md: 'max-w-md w-full',
+  lg: 'max-w-lg w-full',
+  xl: 'max-w-xl w-full',
+  '2xl': 'max-w-2xl w-full',
+  '3xl': 'max-w-3xl w-full',
+};
+
+export const ModalProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const modalRef = useRef<HTMLDialogElement>(null);
+  const [modalContent, setModalContent] = useState<ReactNode>(null);
+  const [sizeClass, setSizeClass] = useState('');
+  // Track if the initial mousedown started on the backdrop
+  const backdropMouseDownRef = useRef<boolean>(false);
+  // Pending content-clear from closeModal, so a quickly-reopened modal isn't wiped by it
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onDismissRef = useRef<(() => void) | null>(null);
+
+  const runDismiss = () => {
+    const cb = onDismissRef.current;
+    onDismissRef.current = null;
+    cb?.();
+  };
+
+  const openModal = (content: ReactNode, options?: ModalOptions) => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    // Replacing an open modal counts as dismissing it
+    runDismiss();
+    onDismissRef.current = options?.onDismiss ?? null;
+    setModalContent(content);
+    setSizeClass(options?.size ? SIZE_CLASS[options.size] : '');
+    if (modalRef.current && !modalRef.current.open) {
+      modalRef.current.showModal();
+    }
+  };
+
+  // Clear content after the close animation finishes
+  const scheduleContentClear = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setModalContent(null);
+      setSizeClass('');
+      closeTimeoutRef.current = null;
+    }, 150);
+  };
+
+  const closeModal = () => {
+    if (modalRef.current) {
+      modalRef.current.close();
+    }
+    runDismiss();
+    scheduleContentClear();
+  };
+
+  const isModalOpen = modalContent !== null;
+
+  return (
+    <ModalContext.Provider value={{ openModal, closeModal, isModalOpen }}>
+      {children}
+      <dialog
+        ref={modalRef}
+        className="modal modal-bottom sm:modal-middle"
+        onClose={() => {
+          if (!modalRef.current?.open) runDismiss();
+          scheduleContentClear();
+        }}
+        onMouseDown={(e) => {
+          // Only mark as backdrop interaction if the mousedown started on the dialog backdrop
+          backdropMouseDownRef.current = e.target === modalRef.current;
+        }}
+        onClick={(e) => {
+          // Close only if both mousedown and click occurred on the backdrop
+          if (e.target === modalRef.current && backdropMouseDownRef.current) {
+            backdropMouseDownRef.current = false;
+            closeModal();
+          } else {
+            backdropMouseDownRef.current = false;
+          }
+        }}
+      >
+        <div
+          className={`modal-box max-h-[90vh] bg-base-300 ${sizeClass}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {modalContent}
+        </div>
+        <form
+          method="dialog"
+          className="modal-backdrop"
+          onMouseDown={() => {
+            // Mark that interaction started on the backdrop overlay
+            backdropMouseDownRef.current = true;
+          }}
+          onClick={() => {
+            // Close only if interaction started on backdrop (prevents drag-out closes)
+            if (backdropMouseDownRef.current) {
+              backdropMouseDownRef.current = false;
+              closeModal();
+            }
+          }}
+        >
+          <button>close</button>
+        </form>
+      </dialog>
+    </ModalContext.Provider>
+  );
+};
+
+export const useModal = (): ModalContextType => {
+  const context = useContext(ModalContext);
+  if (!context) {
+    throw new Error('useModal must be used within a ModalProvider');
+  }
+  return context;
+};

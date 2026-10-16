@@ -1,0 +1,1024 @@
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import type { ISOFile } from 'mp4box';
+import { Content } from '../Models/types';
+import { attachNativeCaptureTap, type NativeAudioSink } from '../Services/nativeAudioSink';
+
+export interface AudioTrackInfo {
+  index: number;
+  name: string;
+}
+
+export interface AudioTrackState {
+  tracks: AudioTrackInfo[];
+  volumes: Record<number, number>;
+  mutedTracks: Set<number>;
+  soloTrack: number | null;
+  masterMuted: boolean;
+  masterVolume: number;
+  setTrackVolume: (index: number, volume: number) => void;
+  toggleTrackMute: (index: number) => void;
+  setMutedTracks: (muted: Set<number>) => void;
+  toggleSolo: (index: number) => void;
+  setMasterMuted: (muted: boolean) => void;
+  setMasterVolume: (vol: number) => void;
+  setMuteOverride: (mutedIndices: number[] | null) => void;
+  setVolumeOverride: (volumes: Record<number, number> | null) => void;
+  isMultiTrack: boolean;
+}
+
+interface AudioTrackData {
+  segraIndex: number;
+  mp4TrackId: number;
+  timescale: number;
+  // AAC encoder priming (media_time from the edit list) in microseconds.
+  // Subtracted from every decoded timestamp so presentation time starts at 0.
+  primingMicros: number;
+  offsets: Float64Array;
+  sizes: Uint32Array;
+  cts: Float64Array;
+  sampleCount: number;
+  cursor: number;
+  // Outputs before this timestamp are pre-roll after a seek and are discarded.
+  discardBeforeMicros: number;
+  decoder: AudioDecoder;
+  decoderConfig: AudioDecoderConfig;
+  gainNode: GainNode;
+  scheduledSources: Set<AudioBufferSourceNode>;
+}
+
+const LOOKAHEAD_SECONDS = 2;
+const CHUNK_SIZE = 2 * 1024 * 1024;
+const SAMPLES_PER_BATCH = 100;
+// AAC frames overlap their predecessor, so the first frame after a jump decodes wrong
+// unless the decoder is fed a couple of earlier frames first.
+const PREROLL_FRAMES = 2;
+// The native sink plays ~90 ms behind the graph (worklet batching + backend cushion and
+// device buffer), so audio is scheduled that much earlier to stay in sync with the video.
+const NATIVE_SINK_LATENCY_SECONDS = 0.09;
+
+// Walk esds -> DecoderSpecificInfo.data to obtain the raw AudioSpecificConfig.
+// AAC streams in MP4 require this as the AudioDecoder `description`.
+function extractAudioSpecificConfig(entry: unknown): Uint8Array | undefined {
+  try {
+    const e = entry as {
+      esds?: { esd?: { descs?: Array<{ descs?: Array<{ data?: Uint8Array }> }> } };
+    };
+    const dsi = e.esds?.esd?.descs?.[0]?.descs?.[0];
+    return dsi?.data ? new Uint8Array(dsi.data) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function computePrimingMicros(
+  edits: Array<{ media_time: number; segment_duration: number }> | undefined,
+  trackTimescale: number,
+): number {
+  if (!edits || edits.length === 0) return 0;
+  const first = edits[0];
+  if (first.media_time > 0 && trackTimescale > 0) {
+    return (first.media_time / trackTimescale) * 1_000_000;
+  }
+  return 0;
+}
+
+interface SampleTables {
+  offsets: Float64Array;
+  sizes: Uint32Array;
+  cts: Float64Array;
+}
+
+type StblBoxes = {
+  stsz?: { sample_sizes: number[] };
+  stz2?: { sample_sizes: number[] };
+  stco?: { chunk_offsets: number[] };
+  co64?: { chunk_offsets: number[] };
+  stsc?: { first_chunk: number[]; samples_per_chunk: number[] };
+  stts?: { sample_counts: number[]; sample_deltas: number[] };
+  ctts?: { sample_counts: number[]; sample_offsets: number[] };
+  stsd?: { entries?: unknown[] };
+};
+
+// Per-sample offset/size/cts from the stbl boxes; null when empty (fragmented) or inconsistent.
+function buildSampleTables(stbl: StblBoxes): SampleTables | null {
+  const stsz = stbl.stsz ?? stbl.stz2;
+  const stco = stbl.stco ?? stbl.co64;
+  const { stsc, stts, ctts } = stbl;
+  if (!stsz || !stco || !stsc || !stts) return null;
+
+  const count = stsz.sample_sizes.length;
+  if (count === 0) return null;
+
+  const offsets = new Float64Array(count);
+  const sizes = new Uint32Array(count);
+  const cts = new Float64Array(count);
+
+  const chunkCount = stco.chunk_offsets.length;
+  let s = 0;
+  for (let run = 0; run < stsc.first_chunk.length && s < count; run++) {
+    const firstChunk = stsc.first_chunk[run] - 1;
+    const endChunk = run + 1 < stsc.first_chunk.length ? stsc.first_chunk[run + 1] - 1 : chunkCount;
+    const perChunk = stsc.samples_per_chunk[run];
+    for (let c = firstChunk; c < endChunk && s < count; c++) {
+      let offset = stco.chunk_offsets[c];
+      for (let k = 0; k < perChunk && s < count; k++, s++) {
+        const size = stsz.sample_sizes[s];
+        offsets[s] = offset;
+        sizes[s] = size;
+        offset += size;
+      }
+    }
+  }
+  if (s < count) return null;
+
+  let dts = 0;
+  s = 0;
+  for (let i = 0; i < stts.sample_counts.length && s < count; i++) {
+    const delta = stts.sample_deltas[i];
+    for (let k = 0, n = stts.sample_counts[i]; k < n && s < count; k++, s++) {
+      cts[s] = dts;
+      dts += delta;
+    }
+  }
+  if (ctts) {
+    s = 0;
+    for (let i = 0; i < ctts.sample_counts.length && s < count; i++) {
+      const shift = ctts.sample_offsets[i];
+      for (let k = 0, n = ctts.sample_counts[i]; k < n && s < count; k++, s++) {
+        cts[s] += shift;
+      }
+    }
+  }
+  return { offsets, sizes, cts };
+}
+
+// Fallback for fragmented files, whose samples mp4box appends from moof boxes.
+function tablesFromSamples(
+  samples: Array<{ offset: number; size: number; cts: number }>,
+): SampleTables {
+  const count = samples.length;
+  const offsets = new Float64Array(count);
+  const sizes = new Uint32Array(count);
+  const cts = new Float64Array(count);
+  for (let s = 0; s < count; s++) {
+    const sample = samples[s];
+    offsets[s] = sample.offset;
+    sizes[s] = sample.size;
+    cts[s] = sample.cts;
+  }
+  return { offsets, sizes, cts };
+}
+
+// Feeds samples [start, end) to the decoder; `ab` holds their contiguous bytes.
+function decodeRun(td: AudioTrackData, start: number, end: number, ab: ArrayBuffer): void {
+  const view = new Uint8Array(ab);
+  const rangeStart = td.offsets[start];
+  for (let i = start; i < end; i++) {
+    const localOffset = td.offsets[i] - rangeStart;
+    const sliceBytes = view.subarray(localOffset, localOffset + td.sizes[i]);
+    const tsMicros = Math.round((td.cts[i] / td.timescale) * 1_000_000);
+    const nextRawCts =
+      i + 1 < td.sampleCount
+        ? td.cts[i + 1]
+        : td.cts[i] + (i > 0 ? td.cts[i] - td.cts[i - 1] : td.timescale * 0.02);
+    const durMicros = Math.max(
+      1,
+      Math.round(((nextRawCts - td.cts[i]) / td.timescale) * 1_000_000),
+    );
+    let chunk: EncodedAudioChunk;
+    try {
+      chunk = new EncodedAudioChunk({
+        type: 'key',
+        timestamp: tsMicros,
+        duration: durMicros,
+        data: sliceBytes,
+      });
+    } catch (err) {
+      console.warn('[useAudioTracks] build chunk failed', err);
+      continue;
+    }
+    try {
+      td.decoder.decode(chunk);
+    } catch (err) {
+      console.warn('[useAudioTracks] decode failed', err);
+    }
+  }
+}
+
+function seekCursor(td: AudioTrackData, timeSec: number): number {
+  const targetRaw = (timeSec + td.primingMicros / 1_000_000) * td.timescale;
+  let lo = 0;
+  let hi = td.sampleCount;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (td.cts[mid] < targetRaw) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.max(0, lo - 1);
+}
+
+function seekTrack(td: AudioTrackData, timeSec: number): void {
+  const target = seekCursor(td, timeSec);
+  td.cursor = Math.max(0, target - PREROLL_FRAMES);
+  td.discardBeforeMicros = Math.round((td.cts[target] / td.timescale) * 1_000_000);
+}
+
+export function useAudioTracks(
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  video: Content,
+): AudioTrackState {
+  const [tracks, setTracks] = useState<AudioTrackInfo[]>([]);
+  const [volumes, setVolumes] = useState<Record<number, number>>({});
+  const [mutedTracks, setMutedTracks] = useState<Set<number>>(new Set());
+  const [soloTrack, setSoloTrack] = useState<number | null>(null);
+  const [masterMuted, setMasterMutedState] = useState(false);
+  const [masterVolume, setMasterVolumeState] = useState(1);
+  const isMultiTrack = tracks.length > 1;
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const masterGainRef = useRef<GainNode | null>(null);
+  const trackDataRef = useRef<Map<number, AudioTrackData>>(new Map());
+  const captureNodeRef = useRef<AudioWorkletNode | null>(null);
+  const sinkRef = useRef<NativeAudioSink | null>(null);
+
+  const fetchUrlRef = useRef<string>('');
+  const pumpingRef = useRef<boolean>(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const audioStartCtxTimeRef = useRef<number>(0);
+  const playbackRateRef = useRef<number>(1);
+  // Bumped on every seek/ratechange. Used to drop stale in-flight fetches.
+  const generationRef = useRef<number>(0);
+
+  const masterMutedRef = useRef(false);
+  const masterVolumeRef = useRef(1);
+  const muteOverrideRef = useRef<Set<number> | null>(null);
+  const volumeOverrideRef = useRef<Record<number, number> | null>(null);
+  const latestRef = useRef({ mutedTracks, soloTrack, volumes });
+  useLayoutEffect(() => {
+    latestRef.current = { mutedTracks, soloTrack, volumes };
+  });
+
+  const trackGain = useCallback((segraIndex: number) => {
+    const { mutedTracks: defaultMuted, soloTrack: solo, volumes: vols } = latestRef.current;
+    const effectiveMuted = muteOverrideRef.current ?? defaultMuted;
+    const effectiveVolumes = volumeOverrideRef.current ?? vols;
+    const muted = solo !== null ? segraIndex !== solo : effectiveMuted.has(segraIndex);
+    return muted ? 0 : (effectiveVolumes[segraIndex] ?? 1);
+  }, []);
+
+  const applyMuting = useCallback(() => {
+    const ctx = audioCtxRef.current;
+    const master = masterGainRef.current;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+
+    master.gain.setTargetAtTime(masterMutedRef.current ? 0 : masterVolumeRef.current, now, 0.005);
+
+    for (const td of trackDataRef.current.values()) {
+      td.gainNode.gain.setTargetAtTime(trackGain(td.segraIndex), now, 0.005);
+    }
+  }, [trackGain]);
+
+  const stopAllSources = useCallback(() => {
+    for (const td of trackDataRef.current.values()) {
+      for (const source of td.scheduledSources) {
+        try {
+          source.onended = null;
+          source.stop();
+        } catch {
+          // ignore
+        }
+        try {
+          source.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+      td.scheduledSources.clear();
+    }
+  }, []);
+
+  const rangeFetch = useCallback(
+    async (start: number, end: number, signal: AbortSignal): Promise<ArrayBuffer> => {
+      const res = await fetch(fetchUrlRef.current, {
+        headers: { Range: `bytes=${start}-${end}` },
+        signal,
+      });
+      if (!res.ok && res.status !== 206 && res.status !== 200) {
+        throw new Error(`range fetch ${start}-${end} failed: ${res.status}`);
+      }
+      return res.arrayBuffer();
+    },
+    [],
+  );
+
+  const onDecoderOutput = useCallback(
+    (td: AudioTrackData, data: AudioData) => {
+      const ctx = audioCtxRef.current;
+      const vid = videoRef.current;
+      if (!ctx) {
+        data.close();
+        return;
+      }
+      if (vid?.paused || data.timestamp < td.discardBeforeMicros) {
+        data.close();
+        return;
+      }
+
+      const tsMicros = data.timestamp;
+      const numFrames = data.numberOfFrames;
+      const numChannels = data.numberOfChannels;
+      const sampleRate = data.sampleRate;
+
+      let audioBuffer: AudioBuffer;
+      try {
+        audioBuffer = ctx.createBuffer(numChannels, numFrames, sampleRate);
+        for (let ch = 0; ch < numChannels; ch++) {
+          data.copyTo(audioBuffer.getChannelData(ch), { planeIndex: ch, format: 'f32-planar' });
+        }
+      } catch {
+        try {
+          audioBuffer = ctx.createBuffer(numChannels, numFrames, sampleRate);
+          for (let ch = 0; ch < numChannels; ch++) {
+            data.copyTo(audioBuffer.getChannelData(ch), { planeIndex: ch });
+          }
+        } catch {
+          data.close();
+          return;
+        }
+      }
+      data.close();
+
+      const presSeconds = (tsMicros - td.primingMicros) / 1_000_000;
+      const rate = playbackRateRef.current || 1;
+      const playAt = audioStartCtxTimeRef.current + presSeconds / rate;
+      const now = ctx.currentTime;
+
+      if (playAt < now - 0.02) return;
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = rate;
+      source.connect(td.gainNode);
+
+      const startAt = Math.max(playAt, now);
+      const offsetInBuffer = startAt > playAt ? startAt - playAt : 0;
+      try {
+        source.start(startAt, offsetInBuffer);
+      } catch {
+        return;
+      }
+      td.scheduledSources.add(source);
+      source.onended = () => {
+        td.scheduledSources.delete(source);
+        try {
+          source.disconnect();
+        } catch {
+          // ignore
+        }
+      };
+    },
+    [videoRef],
+  );
+
+  // Fetches sample bytes and feeds the decoders until the lookahead window is
+  // satisfied. Serialized via pumpingRef. On mid-fetch seek the generation bumps
+  // and the pump drops the in-flight batch before the next iteration.
+  const pumpDecoders = useCallback(async () => {
+    if (pumpingRef.current) return;
+    const ctx = audioCtxRef.current;
+    const vid = videoRef.current;
+    const signal = abortRef.current?.signal;
+    if (!ctx || !vid || !signal || signal.aborted) return;
+    if (vid.paused) return;
+
+    pumpingRef.current = true;
+    try {
+      let startGen = generationRef.current;
+      while (!signal.aborted && !vid.paused) {
+        if (generationRef.current !== startGen) startGen = generationRef.current;
+
+        const playhead = vid.currentTime;
+        const rate = playbackRateRef.current || 1;
+
+        const needy: { td: AudioTrackData; ahead: number; audible: boolean }[] = [];
+        for (const td of trackDataRef.current.values()) {
+          if (td.cursor >= td.sampleCount) continue;
+          const nextCtsSec = td.cts[td.cursor] / td.timescale - td.primingMicros / 1_000_000;
+          const ahead = (nextCtsSec - playhead) / rate;
+          if (ahead >= LOOKAHEAD_SECONDS) continue;
+          needy.push({ td, ahead, audible: trackGain(td.segraIndex) > 0 });
+        }
+        if (needy.length === 0) break;
+        // Audible tracks are requested before muted ones so playback starts sooner.
+        needy.sort((a, b) => Number(b.audible) - Number(a.audible) || a.ahead - b.ahead);
+
+        // Split each batch into contiguous byte runs so ranges skip the interleaved
+        // video and other tracks (hybrid MP4 stores ~1 s per track per fragment).
+        const plans = needy.map(({ td }) => {
+          const runs: { start: number; end: number; fetch?: Promise<ArrayBuffer> }[] = [];
+          const maxEnd = Math.min(td.cursor + SAMPLES_PER_BATCH, td.sampleCount);
+          let start = td.cursor;
+          for (let i = start + 1; i <= maxEnd; i++) {
+            if (i === maxEnd || td.offsets[i] !== td.offsets[i - 1] + td.sizes[i - 1]) {
+              runs.push({ start, end: i });
+              start = i;
+            }
+          }
+          return { td, runs };
+        });
+
+        // Request every track's first run before anyone's second, all in parallel.
+        const maxRuns = Math.max(...plans.map((p) => p.runs.length));
+        for (let r = 0; r < maxRuns; r++) {
+          for (const { td, runs } of plans) {
+            const run = runs[r];
+            if (!run) continue;
+            run.fetch = rangeFetch(
+              td.offsets[run.start],
+              td.offsets[run.end - 1] + td.sizes[run.end - 1] - 1,
+              signal,
+            );
+            run.fetch.catch(() => {});
+          }
+        }
+
+        try {
+          await Promise.all(
+            plans.map(async ({ td, runs }) => {
+              for (const run of runs) {
+                const ab = await run.fetch!;
+                if (signal.aborted || generationRef.current !== startGen) return;
+                decodeRun(td, run.start, run.end, ab);
+                td.cursor = run.end;
+              }
+            }),
+          );
+        } catch (err) {
+          if ((err as { name?: string }).name === 'AbortError') return;
+          console.warn('[useAudioTracks] pump fetch failed', err);
+          return;
+        }
+        if (signal.aborted) return;
+      }
+    } finally {
+      pumpingRef.current = false;
+    }
+  }, [rangeFetch, trackGain, videoRef]);
+
+  const resyncTo = useCallback(
+    (time: number, rate: number) => {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+
+      generationRef.current += 1;
+      stopAllSources();
+
+      for (const td of trackDataRef.current.values()) {
+        try {
+          td.decoder.reset();
+          td.decoder.configure(td.decoderConfig);
+        } catch (err) {
+          console.warn('[useAudioTracks] decoder reconfigure failed', err);
+        }
+        seekTrack(td, time);
+      }
+
+      audioStartCtxTimeRef.current =
+        ctx.currentTime - time / rate - (sinkRef.current ? NATIVE_SINK_LATENCY_SECONDS : 0);
+      playbackRateRef.current = rate;
+
+      pumpDecoders();
+    },
+    [pumpDecoders, stopAllSources],
+  );
+
+  useEffect(() => {
+    if (!video.audioTrackNames || video.audioTrackNames.length <= 1) {
+      setTracks([]);
+      return;
+    }
+    if (typeof AudioDecoder === 'undefined' || typeof EncodedAudioChunk === 'undefined') {
+      console.warn('[useAudioTracks] WebCodecs AudioDecoder not available');
+      setTracks([]);
+      return;
+    }
+
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const probe = await AudioDecoder.isConfigSupported({
+          codec: 'mp4a.40.2',
+          sampleRate: 48000,
+          numberOfChannels: 2,
+        });
+        if (!probe.supported) {
+          console.warn('[useAudioTracks] AAC-LC not supported by AudioDecoder');
+          return;
+        }
+      } catch (err) {
+        console.warn('[useAudioTracks] isConfigSupported failed', err);
+        return;
+      }
+      if (cancelled) return;
+
+      const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+      audioCtxRef.current = ctx;
+      const master = ctx.createGain();
+      master.gain.value = 1;
+      masterGainRef.current = master;
+
+      // Prefer playing through Segra.exe itself (native audio stream server) so Windows
+      // application-audio capture (Discord/OBS) picks the sound up. When that's unavailable,
+      // fall back to webview-rendered audio exactly as before.
+      const captureTap = await attachNativeCaptureTap(ctx, master).catch(() => null);
+      if (cancelled || abortController.signal.aborted) {
+        if (captureTap) {
+          try {
+            captureTap.node.disconnect();
+          } catch {
+            // ignore
+          }
+        }
+        return;
+      }
+      if (captureTap) {
+        captureNodeRef.current = captureTap.node;
+        sinkRef.current = captureTap.sink;
+      } else {
+        master.connect(ctx.destination);
+      }
+
+      const url = `http://localhost:2222/api/content?input=${encodeURIComponent(video.filePath)}`;
+      fetchUrlRef.current = url;
+
+      // Probe file size via a tiny ranged GET. ContentServer exposes Content-Range
+      // via Access-Control-Expose-Headers so we can read the total length here.
+      let fileSize = -1;
+      try {
+        const probeRes = await fetch(url, {
+          headers: { Range: 'bytes=0-1' },
+          signal: abortController.signal,
+        });
+        const contentRange = probeRes.headers.get('Content-Range');
+        const m = contentRange?.match(/\/(\d+)\s*$/);
+        if (m) fileSize = parseInt(m[1], 10);
+        await probeRes.arrayBuffer();
+      } catch (err) {
+        if ((err as { name?: string }).name !== 'AbortError') {
+          console.error('[useAudioTracks] file size probe failed', err);
+        }
+        return;
+      }
+      if (cancelled || abortController.signal.aborted) return;
+      if (fileSize <= 0) {
+        console.error('[useAudioTracks] could not determine file size');
+        return;
+      }
+
+      // mp4box is used only as a moov parser. After we extract compact sample
+      // tables we drop the file reference and manage fetching ourselves.
+      // Loaded on first use so it isn't parsed at app startup
+      const mp4box = await import('mp4box');
+      if (cancelled || abortController.signal.aborted) return;
+      let file: ISOFile | null = mp4box.createFile();
+      // Skip mp4box's per-sample object lists; sample tables are read from stbl below.
+      file.buildSampleLists = function (this: ISOFile) {
+        for (const trak of this.moov.traks) {
+          trak.samples = [];
+          trak.samples_duration = 0;
+          trak.samples_size = 0;
+        }
+      };
+      type AudioTrackInfoRaw = {
+        id: number;
+        codec: string;
+        timescale: number;
+        edits?: Array<{ media_time: number; segment_duration: number }>;
+        audio?: { sample_rate: number; channel_count: number };
+      };
+      type MoovInfo = { audioTracks: Array<AudioTrackInfoRaw> };
+
+      let readyFired = false;
+      let readyInfo: MoovInfo | null = null;
+      file.onReady = (info) => {
+        readyFired = true;
+        readyInfo = info as unknown as MoovInfo;
+      };
+      file.onError = (mod, msg) => {
+        console.warn('[useAudioTracks] mp4box error', mod, msg);
+      };
+
+      // Seed mp4box with enough bytes to parse moov. Phase A seeds ftyp + mdat
+      // header, phase B follows mp4box's nextParsePosition return value
+      // (typically a jump straight to moov for moov-at-end files), phase C is a
+      // sequential fallback for unusual layouts.
+      const appendRange = async (start: number, end: number) => {
+        if (end < start || start >= fileSize) return;
+        const ab = await rangeFetch(start, end, abortController.signal);
+        return file!.appendBuffer(mp4box.MP4BoxBuffer.fromArrayBuffer(ab, start));
+      };
+
+      try {
+        const phaseAEnd = Math.min(CHUNK_SIZE - 1, fileSize - 1);
+        const retA = await appendRange(0, phaseAEnd);
+
+        let nextOffset = CHUNK_SIZE;
+        if (!readyFired && typeof retA === 'number' && retA > phaseAEnd + 1) {
+          const PHASE_B_CAP = 128 * 1024 * 1024;
+          const start = retA;
+          const end = Math.min(start + PHASE_B_CAP - 1, fileSize - 1);
+          const retB = await appendRange(start, end);
+          if (typeof retB === 'number' && retB > end) nextOffset = retB;
+          else nextOffset = end + 1;
+        }
+
+        if (!readyFired) {
+          let iterations = 0;
+          const MAX_SEED_ITERATIONS = 128;
+          while (
+            !readyFired &&
+            nextOffset < fileSize &&
+            iterations < MAX_SEED_ITERATIONS &&
+            !cancelled &&
+            !abortController.signal.aborted
+          ) {
+            const end = Math.min(nextOffset + CHUNK_SIZE - 1, fileSize - 1);
+            const ret = await appendRange(nextOffset, end);
+            if (readyFired) break;
+            if (typeof ret === 'number' && ret > end) nextOffset = ret;
+            else nextOffset = end + 1;
+            iterations += 1;
+          }
+        }
+
+        if (!readyFired) {
+          console.error('[useAudioTracks] mp4box never parsed moov');
+          return;
+        }
+      } catch (err) {
+        if ((err as { name?: string }).name !== 'AbortError') {
+          console.error('[useAudioTracks] seeding fetches failed', err);
+        }
+        return;
+      }
+
+      if (cancelled || abortController.signal.aborted) return;
+      const info = readyInfo as MoovInfo | null;
+      if (!info) return;
+
+      const audioTracks = info.audioTracks ?? [];
+      if (audioTracks.length === 0) {
+        console.warn('[useAudioTracks] mp4 has no audio tracks');
+        return;
+      }
+
+      const displayTracks: AudioTrackInfo[] = [];
+      const initialVolumes: Record<number, number> = {};
+
+      for (let i = 0; i < audioTracks.length; i++) {
+        const trk = audioTracks[i];
+        const name = video.audioTrackNames?.[i] ?? `Track ${i + 1}`;
+
+        const trakBox = file.getTrackById(trk.id) as unknown as
+          | {
+              mdia?: { minf?: { stbl?: StblBoxes } };
+              samples?: Array<{ offset: number; size: number; cts: number }>;
+            }
+          | undefined;
+        const stbl = trakBox?.mdia?.minf?.stbl;
+        const stsdEntry = stbl?.stsd?.entries?.[0];
+        const description = extractAudioSpecificConfig(stsdEntry);
+
+        const decoderConfig: AudioDecoderConfig = {
+          codec: trk.codec,
+          sampleRate: trk.audio?.sample_rate ?? 48000,
+          numberOfChannels: trk.audio?.channel_count ?? 2,
+          ...(description ? { description } : {}),
+        };
+
+        const support = await AudioDecoder.isConfigSupported(decoderConfig).catch(() => ({
+          supported: false,
+        }));
+        if (!support.supported) {
+          console.warn(`[useAudioTracks] track ${i} (${trk.codec}) unsupported`);
+          continue;
+        }
+
+        const tables =
+          (stbl ? buildSampleTables(stbl) : null) ?? tablesFromSamples(trakBox?.samples ?? []);
+        const sampleCount = tables.offsets.length;
+        if (sampleCount === 0) {
+          console.warn(`[useAudioTracks] track ${i} has no samples`);
+          continue;
+        }
+
+        const gain = ctx.createGain();
+        gain.gain.value = 1;
+        gain.connect(master);
+
+        const td: AudioTrackData = {
+          segraIndex: i,
+          mp4TrackId: trk.id,
+          timescale: trk.timescale,
+          primingMicros: computePrimingMicros(trk.edits, trk.timescale),
+          offsets: tables.offsets,
+          sizes: tables.sizes,
+          cts: tables.cts,
+          sampleCount,
+          cursor: 0,
+          discardBeforeMicros: 0,
+          decoder: null as unknown as AudioDecoder,
+          decoderConfig,
+          gainNode: gain,
+          scheduledSources: new Set(),
+        };
+
+        const decoder = new AudioDecoder({
+          output: (d) => onDecoderOutput(td, d),
+          error: (e) => console.warn(`[useAudioTracks] decoder error track ${i}`, e),
+        });
+        try {
+          decoder.configure(decoderConfig);
+        } catch (err) {
+          console.warn(`[useAudioTracks] decoder.configure failed track ${i}`, err);
+          continue;
+        }
+        td.decoder = decoder;
+
+        trackDataRef.current.set(i, td);
+        displayTracks.push({ index: i, name });
+        initialVolumes[i] = 1;
+      }
+
+      if (trackDataRef.current.size === 0) {
+        console.warn('[useAudioTracks] no decodable audio tracks');
+        return;
+      }
+
+      // Drop mp4box so its parsed box tree can be GC'd.
+      file = null;
+
+      setTracks(displayTracks);
+      setVolumes(initialVolumes);
+      setMutedTracks(new Set([0]));
+      setSoloTrack(null);
+
+      const vid = videoRef.current;
+      const startTime = vid?.currentTime ?? 0;
+      const startRate = vid?.playbackRate ?? 1;
+      for (const td of trackDataRef.current.values()) {
+        seekTrack(td, startTime);
+      }
+      audioStartCtxTimeRef.current =
+        ctx.currentTime -
+        startTime / startRate -
+        (sinkRef.current ? NATIVE_SINK_LATENCY_SECONDS : 0);
+      playbackRateRef.current = startRate;
+      pumpDecoders();
+    })();
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+      generationRef.current += 1;
+
+      stopAllSources();
+      for (const td of trackDataRef.current.values()) {
+        try {
+          td.decoder.close();
+        } catch {
+          // ignore
+        }
+        try {
+          td.gainNode.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+      trackDataRef.current.clear();
+
+      const captureNode = captureNodeRef.current;
+      if (captureNode) {
+        try {
+          captureNode.disconnect();
+        } catch {
+          // ignore
+        }
+        try {
+          captureNode.port.close();
+        } catch {
+          // ignore
+        }
+      }
+      captureNodeRef.current = null;
+      try {
+        sinkRef.current?.flush();
+      } catch {
+        // ignore
+      }
+      sinkRef.current = null;
+
+      const master = masterGainRef.current;
+      if (master) {
+        try {
+          master.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+      masterGainRef.current = null;
+
+      const ctx = audioCtxRef.current;
+      if (ctx) ctx.close().catch(() => {});
+      audioCtxRef.current = null;
+
+      pumpingRef.current = false;
+      setTracks([]);
+    };
+  }, [
+    video.filePath,
+    video.audioTrackNames?.join('|'),
+    pumpDecoders,
+    onDecoderOutput,
+    rangeFetch,
+    stopAllSources,
+    videoRef,
+  ]);
+
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || !isMultiTrack) return;
+
+    vid.muted = true;
+
+    // The native sink plays in real time from a small queue, so starts/restarts must be
+    // explicit: drop anything buffered for the old position, then start a fresh stream.
+    const nativeStart = () => {
+      try {
+        sinkRef.current?.play(audioCtxRef.current?.sampleRate ?? 48000, 2);
+      } catch {
+        // ignore
+      }
+    };
+    const nativeFlush = () => {
+      try {
+        sinkRef.current?.flush();
+      } catch {
+        // ignore
+      }
+    };
+
+    const resyncNative = () => {
+      nativeFlush();
+      resyncTo(vid.currentTime, vid.playbackRate);
+      if (!vid.paused) nativeStart();
+    };
+
+    const onPlay = async () => {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        try {
+          await ctx.resume();
+        } catch {
+          // ignore
+        }
+      }
+      nativeFlush();
+      resyncTo(vid.currentTime, vid.playbackRate);
+      nativeStart();
+    };
+
+    const onPause = () => {
+      stopAllSources();
+      nativeFlush();
+    };
+
+    const onSeeked = () => {
+      resyncNative();
+    };
+
+    const onRateChange = () => {
+      resyncNative();
+    };
+
+    const onTimeUpdate = () => {
+      pumpDecoders();
+    };
+
+    vid.addEventListener('play', onPlay);
+    vid.addEventListener('pause', onPause);
+    vid.addEventListener('seeked', onSeeked);
+    vid.addEventListener('ratechange', onRateChange);
+    vid.addEventListener('timeupdate', onTimeUpdate);
+
+    if (!vid.paused) onPlay();
+
+    return () => {
+      vid.removeEventListener('play', onPlay);
+      vid.removeEventListener('pause', onPause);
+      vid.removeEventListener('seeked', onSeeked);
+      vid.removeEventListener('ratechange', onRateChange);
+      vid.removeEventListener('timeupdate', onTimeUpdate);
+      stopAllSources();
+      vid.muted = localStorage.getItem('segra-muted') === 'true';
+    };
+  }, [videoRef, isMultiTrack, resyncTo, stopAllSources, pumpDecoders]);
+
+  useEffect(() => {
+    applyMuting();
+  }, [volumes, mutedTracks, soloTrack, tracks, applyMuting]);
+
+  const setTrackVolume = useCallback((index: number, volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    setVolumes((prev) => ({ ...prev, [index]: clamped }));
+  }, []);
+
+  const toggleTrackMute = useCallback((index: number) => {
+    setMutedTracks((prev) => {
+      const wasEnabled = !prev.has(index);
+      if (wasEnabled) {
+        const next = new Set(prev);
+        next.add(index);
+        return next;
+      }
+      if (index === 0) {
+        const next = new Set<number>();
+        for (const td of trackDataRef.current.values()) {
+          if (td.segraIndex !== 0) next.add(td.segraIndex);
+        }
+        return next;
+      }
+      const next = new Set(prev);
+      next.delete(index);
+      next.add(0);
+      return next;
+    });
+  }, []);
+
+  const replaceMutedTracks = useCallback((muted: Set<number>) => {
+    setMutedTracks(muted);
+  }, []);
+
+  const toggleSolo = useCallback((index: number) => {
+    setSoloTrack((prev) => (prev === index ? null : index));
+  }, []);
+
+  const setMasterMuted = useCallback(
+    (muted: boolean) => {
+      masterMutedRef.current = muted;
+      setMasterMutedState(muted);
+      applyMuting();
+    },
+    [applyMuting],
+  );
+
+  const setMasterVolume = useCallback(
+    (vol: number) => {
+      const clamped = Math.max(0, Math.min(1, vol));
+      masterVolumeRef.current = clamped;
+      setMasterVolumeState(clamped);
+      applyMuting();
+    },
+    [applyMuting],
+  );
+
+  const setMuteOverride = useCallback(
+    (mutedIndices: number[] | null) => {
+      muteOverrideRef.current = mutedIndices ? new Set(mutedIndices) : null;
+      applyMuting();
+    },
+    [applyMuting],
+  );
+
+  const setVolumeOverride = useCallback(
+    (vols: Record<number, number> | null) => {
+      volumeOverrideRef.current = vols;
+      applyMuting();
+    },
+    [applyMuting],
+  );
+
+  return {
+    tracks,
+    volumes,
+    mutedTracks,
+    soloTrack,
+    masterMuted,
+    masterVolume,
+    setTrackVolume,
+    toggleTrackMute,
+    setMutedTracks: replaceMutedTracks,
+    toggleSolo,
+    setMasterMuted,
+    setMasterVolume,
+    setMuteOverride,
+    setVolumeOverride,
+    isMultiTrack,
+  };
+}

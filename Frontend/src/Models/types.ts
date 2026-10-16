@@ -1,0 +1,539 @@
+export type ContentType = 'Session' | 'Buffer' | 'Clip' | 'Highlight';
+
+export type RecordingMode = 'Session' | 'Buffer' | 'Hybrid';
+
+export type AudioOutputMode = 'All' | 'GameOnly' | 'GameAndDiscord';
+export type AudioTrackType = 'mix' | 'input' | 'output';
+
+export type StartupWindowMode = 'Normal' | 'Minimized';
+export type CloseButtonAction = 'Minimize' | 'Exit';
+export type GpuPriority = 'High' | 'Realtime';
+
+export interface Content {
+  id: string;
+  type: ContentType;
+  title: string;
+  game: string;
+  bookmarks: Bookmark[];
+  fileName: string;
+  filePath: string;
+  fileSize: string;
+  fileSizeKb: number;
+  duration: string;
+  createdAt: string;
+  uploadUrl?: string;
+  igdbId?: number;
+  gameExePath?: string;
+  isImported: boolean;
+  compressed: boolean;
+  audioTrackNames?: string[];
+  audioTrackTypes?: AudioTrackType[];
+}
+
+export interface OBSVersion {
+  version: string;
+  isBeta: boolean;
+  url: string;
+}
+
+export interface HotkeyBrokerStatus {
+  installed: boolean;
+  upToDate: boolean;
+  connected: boolean;
+  // An install or update is needed and the automatic attempt was declined or failed.
+  actionRequired: boolean;
+}
+
+export interface State {
+  gpuVendor: GpuVendor;
+  integratedGpuVendors: GpuVendor[];
+  preRecording?: PreRecording;
+  recording?: Recording;
+  alwaysOnBufferActive: boolean;
+  isFinishingRecording: boolean;
+  hasLoadedObs: boolean;
+  content: Content[];
+  inputDevices: AudioDevice[];
+  outputDevices: AudioDevice[];
+  displays: Display[];
+  codecs: Codec[];
+  availableOBSVersions: OBSVersion[];
+  isCheckingForUpdates: boolean;
+  gameList: GameListEntry[];
+  maxDisplayHeight: number;
+  maxAudioTracks: number;
+  currentFolderSizeGb: number;
+  recordingDriveUsedGb: number | null;
+  recordingDriveFreeGb: number | null;
+  cacheFolder: string;
+  platform: 'windows' | 'linux';
+  usesScreenSharePicker: boolean;
+  hotkeysNeedInputGroup: boolean;
+  // Windows only; the backend leaves it unset elsewhere.
+  hotkeyBroker?: HotkeyBrokerStatus | null;
+}
+
+export enum GpuVendor {
+  Unknown = 'Unknown',
+  Nvidia = 'Nvidia',
+  AMD = 'AMD',
+  Intel = 'Intel',
+}
+
+export enum BookmarkType {
+  Manual = 'Manual',
+  Kill = 'Kill',
+  Goal = 'Goal',
+  Assist = 'Assist',
+  Death = 'Death',
+}
+
+export const includeInHighlight = (type: BookmarkType): boolean =>
+  type === BookmarkType.Kill || type === BookmarkType.Goal;
+
+export enum BookmarkSubtype {
+  Headshot = 'Headshot',
+}
+
+export enum HotkeyAction {
+  CreateBookmark = 'CreateBookmark',
+  SaveReplayBuffer = 'SaveReplayBuffer',
+  ToggleRecording = 'ToggleRecording',
+  TogglePreview = 'TogglePreview',
+}
+
+export interface Hotkey {
+  keys: number[];
+  action: HotkeyAction;
+  enabled: boolean;
+}
+
+export interface Bookmark {
+  id: number;
+  type: BookmarkType;
+  subtype?: BookmarkSubtype;
+  time: string;
+}
+
+export interface Recording {
+  startTime: Date;
+  endTime: Date;
+  game: string;
+  isUsingGameHook: boolean;
+  isUsingWindowCapture: boolean;
+  coverImageId?: string;
+  startSettings?: Partial<Settings>; // Recording-related settings as they were at start
+}
+
+export interface PreRecording {
+  game: string;
+  status: string;
+  coverImageId?: string;
+}
+
+export interface AudioDevice {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+}
+
+export interface DeviceSetting {
+  id: string;
+  name: string;
+  volume: number; // Volume from 0.0 to 1.0
+  // Input devices only
+  noiseSuppression?: boolean;
+  forceMono?: boolean;
+}
+
+export interface Display {
+  deviceId: string;
+  deviceName: string;
+  isPrimary: boolean;
+  isHdr: boolean; // Display is currently in HDR mode (Windows "Use HDR" enabled)
+  width: number; // Current resolution width
+  height: number; // Current resolution height
+}
+
+export interface Codec {
+  friendlyName: string;
+  internalEncoderId: string;
+  isHardwareEncoder: boolean;
+}
+
+export interface Game {
+  name: string;
+  paths?: string[];
+}
+
+export interface GameListEntry {
+  name: string;
+  executables: string[];
+  icon?: string; // CDN icon id (https://segra.tv/api/games/icon/{icon})
+  igdbId?: number;
+}
+
+// Per-game recording quality override. When preset is a named preset (low/standard/high) the
+// backend resolves concrete values at record time; when 'custom' the explicit fields below are used.
+export interface GameQualityOverride {
+  preset: VideoQualityPreset;
+  resolution: '720p' | '1080p' | '1440p' | '4K';
+  frameRate: number;
+  rateControl: string;
+  crfValue: number;
+  cqLevel: number;
+  bitrate: number;
+  minBitrate: number;
+  maxBitrate: number;
+  encoder: 'gpu' | 'cpu';
+  codec: Codec | null;
+}
+
+export interface GameRecordingModeOverride {
+  recordingMode: RecordingMode;
+  replayBufferDuration: number;
+  replayBufferMaxSize: number;
+}
+
+// A single entry in the unified per-game settings list (replaces whitelist/blacklist).
+// record === true means "always record this game", false means "never record it".
+// Each *Override is null when the game inherits the corresponding global setting.
+export interface GameSetting {
+  name: string;
+  paths: string[];
+  igdbId: number | null; // catalog link; keeps name/icon in sync on startup
+  icon?: string; // CDN icon id resolved from the catalog (known games)
+  customIcon: string | null; // base64 PNG extracted from the exe (custom games)
+  record: boolean;
+  qualityOverride: GameQualityOverride | null;
+  recordingModeOverride: GameRecordingModeOverride | null;
+  discardSessionsWithoutBookmarksOverride: boolean | null;
+  enableHdrOverride: boolean | null;
+  volumeOverride: number | null; // Multiplier on top of the configured device volume (0-2)
+  highlightPaddingOverride: GameHighlightPaddingOverride | null;
+}
+
+export interface GameHighlightPaddingOverride {
+  before: number; // Seconds before a highlight moment
+  after: number; // Seconds after a highlight moment
+}
+
+export interface GameIntegrationSettings {
+  enabled: boolean;
+}
+
+export interface GameIntegrations {
+  counterStrike2: GameIntegrationSettings;
+  leagueOfLegends: GameIntegrationSettings;
+  pubg: GameIntegrationSettings;
+  rocketLeague: GameIntegrationSettings;
+  dota2: GameIntegrationSettings;
+  rust: GameIntegrationSettings;
+  minecraft: GameIntegrationSettings;
+  runescapeDragonwilds: GameIntegrationSettings;
+  warThunder: GameIntegrationSettings;
+  gta: GameIntegrationSettings;
+  rainbowSixSiege: GameIntegrationSettings;
+  wardogs: GameIntegrationSettings;
+  deadlock: GameIntegrationSettings;
+  battlefield6: GameIntegrationSettings;
+  valorant: GameIntegrationSettings;
+  overwatch: GameIntegrationSettings;
+  fortnite: GameIntegrationSettings;
+}
+
+export type ClipEncoder = 'gpu' | 'cpu';
+export type ClipCodec = 'h264' | 'h265' | 'av1';
+export type ClipFPS = 0 | 24 | 30 | 60 | 120 | 144;
+export type ClipAudioQuality = '96k' | '128k' | '192k' | '256k' | '320k';
+export type CpuClipPreset =
+  | 'ultrafast'
+  | 'superfast'
+  | 'veryfast'
+  | 'faster'
+  | 'fast'
+  | 'medium'
+  | 'slow'
+  | 'slower'
+  | 'veryslow';
+export type NvidiaClipPreset = 'slow' | 'medium' | 'fast';
+export type Av1NvencPreset = 'p1' | 'p2' | 'p3' | 'p4' | 'p5' | 'p6' | 'p7';
+export type AmdClipPreset = 'quality' | 'transcoding' | 'lowlatency' | 'ultralowlatency';
+export type IntelClipPreset = 'fast' | 'medium' | 'slow';
+export type ClipPreset =
+  CpuClipPreset | NvidiaClipPreset | Av1NvencPreset | AmdClipPreset | IntelClipPreset;
+
+export type VideoQualityPreset = 'low' | 'standard' | 'high' | 'custom';
+export type ClipQualityPreset = 'low' | 'standard' | 'high' | 'custom';
+
+export type MenuItemId = 'Full Sessions' | 'Replay Buffer' | 'Clips' | 'Highlights' | 'Settings';
+
+export interface MenuItemPreference {
+  id: MenuItemId;
+  visible: boolean;
+}
+
+export const DEFAULT_MENU_ITEMS: MenuItemPreference[] = [
+  { id: 'Full Sessions', visible: true },
+  { id: 'Replay Buffer', visible: true },
+  { id: 'Clips', visible: true },
+  { id: 'Highlights', visible: true },
+  { id: 'Settings', visible: true },
+];
+
+const MENU_ITEM_CONTENT_TYPES: Record<MenuItemId, ContentType[]> = {
+  'Full Sessions': ['Session'],
+  'Replay Buffer': ['Buffer'],
+  Clips: ['Clip'],
+  Highlights: ['Highlight'],
+  Settings: [],
+};
+
+export const menuItemHasContent = (id: MenuItemId, content: Content[]): boolean => {
+  const types = MENU_ITEM_CONTENT_TYPES[id];
+  if (types.length === 0) return false;
+  return content.some((c) => types.includes(c.type));
+};
+
+export interface Settings {
+  resolution: '720p' | '1080p' | '1440p' | '4K';
+  frameRate: number;
+  stretch4By3: boolean;
+  enableHdr: boolean; // When false, recordings are always SDR even on an HDR display
+  gpuPriority: GpuPriority;
+  rateControl: string;
+  crfValue: number;
+  cqLevel: number;
+  bitrate: number;
+  minBitrate: number; // VBR only (Mbps)
+  maxBitrate: number; // VBR only (Mbps)
+  encoder: 'gpu' | 'cpu';
+  codec: Codec | null;
+  storageLimit: number;
+  contentFolder: string;
+  cacheFolder: string;
+  inputDevices: DeviceSetting[];
+  outputDevices: DeviceSetting[];
+  selectedDisplay: Display | null;
+  selectedOBSVersion: string | null; // null means automatic (latest non-beta)
+  hotkeyBrokerDeclinedVersion: string | null; // backend-owned, mirrored only
+  pipeWireRestoreToken: string | null; // backend-owned, mirrored only
+  enableAi: boolean;
+  autoGenerateHighlights: boolean;
+  runOnStartup: boolean;
+  startupWindowMode: StartupWindowMode; // Window state when launched from startup
+  closeButtonAction: CloseButtonAction;
+  receiveBetaUpdates: boolean;
+  autoInstallUpdates: boolean; // Install a downloaded update once nothing records and the window is closed
+  airplaneMode: boolean; // Hides cloud account/login/upload features and signs the user out
+  recordingMode: RecordingMode;
+  replayBufferDuration: number; // in seconds
+  replayBufferMaxSize: number; // in MB
+  alwaysOnReplayBuffer: boolean; // Keep a display replay buffer running while nothing records
+  highlightPaddingBefore: number; // Seconds before a highlight moment
+  highlightPaddingAfter: number; // Seconds after a highlight moment
+  clipClearSegmentsAfterCreatingClip: boolean;
+  clipShowInBrowserAfterUpload: boolean; // Open browser after upload
+  clipEncoder: ClipEncoder;
+  clipQualityCpu: number; // CPU CRF: 17 (High) to 28 (Low)
+  clipQualityGpu: number; // GPU (CQ/QP/ICQ): 0-1 (High) to 51 (Low)
+  clipCodec: ClipCodec;
+  clipFps: ClipFPS;
+  clipAudioQuality: ClipAudioQuality;
+  clipPreset: ClipPreset;
+  clipKeepSeparateAudioTracks: boolean;
+  copyCompressSizesMb: number[]; // Hidden setting (no UI), sizes for "Copy as X MB"
+  keybindings: Hotkey[];
+  games: GameSetting[];
+  autoRecordGames: boolean; // When false, don't auto-start recording when a game launches
+  gameIntegrations: GameIntegrations;
+  soundEffectsVolume: number; // Volume for UI sound effects (0.0 to 1.0)
+  showNewBadgeOnVideos: boolean;
+  showGameBackground: boolean; // Show game background while recording
+  showAudioWaveformInTimeline: boolean; // Show audio waveform in video timeline
+  enableSeparateAudioTracks: boolean; // Advanced: per-source audio tracks
+  audioOutputMode: AudioOutputMode;
+  videoQualityPreset: VideoQualityPreset;
+  clipQualityPreset: ClipQualityPreset;
+  confirmBeforeDeleting: boolean;
+  removeOriginalAfterCompression: boolean;
+  discardSessionsWithoutBookmarks: boolean;
+  menuItems: MenuItemPreference[];
+  defaultMenuItem: MenuItemId;
+}
+
+export const initialState: State = {
+  gpuVendor: GpuVendor.Unknown,
+  integratedGpuVendors: [],
+  recording: undefined,
+  alwaysOnBufferActive: false,
+  isFinishingRecording: false,
+  hasLoadedObs: false,
+  content: [],
+  inputDevices: [],
+  outputDevices: [],
+  displays: [],
+  codecs: [],
+  availableOBSVersions: [],
+  isCheckingForUpdates: false,
+  gameList: [],
+  maxDisplayHeight: 1080,
+  maxAudioTracks: 6,
+  currentFolderSizeGb: 0,
+  recordingDriveUsedGb: null,
+  recordingDriveFreeGb: null,
+  cacheFolder: '',
+  platform: 'windows',
+  usesScreenSharePicker: false,
+  hotkeysNeedInputGroup: false,
+};
+
+export const initialSettings: Settings = {
+  resolution: '720p',
+  frameRate: 30,
+  stretch4By3: true,
+  enableHdr: true,
+  gpuPriority: 'Realtime',
+  rateControl: 'VBR',
+  crfValue: 23,
+  cqLevel: 20,
+  bitrate: 50,
+  minBitrate: 35,
+  maxBitrate: 70,
+  encoder: 'gpu',
+  codec: null,
+  storageLimit: 100,
+  contentFolder: '',
+  cacheFolder: '',
+  inputDevices: [],
+  outputDevices: [],
+  selectedDisplay: null, // Default to null (auto-select)
+  selectedOBSVersion: null, // null means automatic (latest non-beta)
+  hotkeyBrokerDeclinedVersion: null,
+  pipeWireRestoreToken: null,
+  enableAi: true,
+  autoGenerateHighlights: true,
+  runOnStartup: false,
+  startupWindowMode: 'Minimized',
+  closeButtonAction: 'Minimize',
+  receiveBetaUpdates: false,
+  autoInstallUpdates: true,
+  airplaneMode: false,
+  recordingMode: 'Hybrid',
+  replayBufferDuration: 30,
+  replayBufferMaxSize: 1000,
+  alwaysOnReplayBuffer: false,
+  highlightPaddingBefore: 4,
+  highlightPaddingAfter: 4,
+  clipClearSegmentsAfterCreatingClip: false,
+  clipShowInBrowserAfterUpload: false,
+  clipEncoder: 'cpu',
+  clipQualityCpu: 23,
+  clipQualityGpu: 23,
+  clipCodec: 'h264',
+  clipFps: 60,
+  clipAudioQuality: '128k',
+  clipPreset: 'veryfast',
+  clipKeepSeparateAudioTracks: false,
+  copyCompressSizesMb: [20, 50, 100, 500],
+  soundEffectsVolume: 1,
+  showNewBadgeOnVideos: false,
+  showGameBackground: true,
+  showAudioWaveformInTimeline: true,
+  enableSeparateAudioTracks: false,
+  audioOutputMode: 'All',
+  videoQualityPreset: 'high',
+  clipQualityPreset: 'standard',
+  confirmBeforeDeleting: false,
+  removeOriginalAfterCompression: false,
+  discardSessionsWithoutBookmarks: false,
+  menuItems: DEFAULT_MENU_ITEMS,
+  defaultMenuItem: 'Full Sessions',
+  keybindings: [
+    { keys: [119], action: HotkeyAction.CreateBookmark, enabled: true }, // 119 is F8
+    { keys: [120], action: HotkeyAction.ToggleRecording, enabled: true }, // 120 is F9
+    { keys: [121], action: HotkeyAction.SaveReplayBuffer, enabled: true }, // 121 is F10
+    { keys: [122], action: HotkeyAction.TogglePreview, enabled: true }, // 122 is F11
+  ],
+  games: [],
+  autoRecordGames: true,
+  gameIntegrations: {
+    counterStrike2: { enabled: true },
+    leagueOfLegends: { enabled: true },
+    pubg: { enabled: true },
+    rocketLeague: { enabled: false },
+    dota2: { enabled: true },
+    rust: { enabled: true },
+    minecraft: { enabled: true },
+    runescapeDragonwilds: { enabled: true },
+    warThunder: { enabled: true },
+    gta: { enabled: true },
+    rainbowSixSiege: { enabled: true },
+    wardogs: { enabled: true },
+    deadlock: { enabled: true },
+    battlefield6: { enabled: true },
+    valorant: { enabled: true },
+    overwatch: { enabled: true },
+    fortnite: { enabled: true },
+  },
+};
+
+export interface Segment {
+  id: number;
+  contentId: string;
+  type: ContentType;
+  startTime: number;
+  endTime: number;
+  thumbnailDataUrl?: string;
+  isLoading: boolean;
+  fileName: string;
+  filePath: string;
+  game?: string;
+  title?: string;
+  igdbId?: number;
+  mutedAudioTracks?: number[];
+  audioTrackVolumes?: Record<number, number>;
+}
+
+export interface SegmentCardProps {
+  segment: Segment;
+  index: number;
+  moveCard: (dragIndex: number, hoverIndex: number) => void;
+  formatTime: (time: number) => string;
+  isHovered: boolean;
+  setHoveredSegmentId: (id: number | null) => void;
+  removeSegment: (id: number) => void;
+  audioTrackNames?: string[];
+  audioTrackTypes?: AudioTrackType[];
+  onMutedAudioTracksChange?: (id: number, mutedTracks: number[]) => void;
+  onAudioTrackVolumesChange?: (id: number, volumes: Record<number, number>) => void;
+}
+
+export interface AiProgress {
+  id: string;
+  progress: number;
+  status: 'processing' | 'done';
+  message: string;
+  content: Content;
+}
+
+export interface MigrationStatus {
+  isRunning: boolean;
+  currentMigration: string | null;
+  step: number;
+  stepCount: number;
+  progress: number | null;
+  progressTotal: number | null;
+  progressUnit: string | null;
+}
+
+export interface GameResponse {
+  game: {
+    id: number;
+    name: string;
+    cover?: {
+      id: number;
+      image_id: string;
+    };
+  };
+}

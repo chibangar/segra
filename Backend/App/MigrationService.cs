@@ -1,0 +1,1434 @@
+using Serilog;
+using System.Text.Json;
+using Segra.Backend.Core;
+using Segra.Backend.Media;
+using Segra.Backend.Shared;
+using Segra.Backend.Core.Models;
+using Segra.Backend.Windows.Storage;
+
+namespace Segra.Backend.App;
+
+internal static class MigrationService
+{
+    private record Migration(string Id, Action Apply);
+
+    private static string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+    private static string MigrationsFolder = Path.Combine(appDataDir, ".migrations");
+    private static string AppliedPath => Path.Combine(MigrationsFolder, "applied.json");
+
+    private static readonly TaskCompletionSource<bool> _migrationsComplete = new();
+    public static Task WaitForMigrationsAsync() => _migrationsComplete.Task;
+    public static bool IsRunning { get; private set; } = false;
+    public static string? CurrentMigration { get; private set; } = null;
+
+    private static int _step, _stepCount;
+    private static int? _progress, _progressTotal;
+    private static string? _progressUnit;
+    private static long _progressSentAt;
+
+    public static object Status => new
+    {
+        isRunning = IsRunning && !Program.IsFirstRun,
+        currentMigration = CurrentMigration,
+        step = _step,
+        stepCount = _stepCount,
+        progress = _progress,
+        progressTotal = _progressTotal,
+        progressUnit = _progressUnit,
+    };
+
+    public static void RunMigrations()
+    {
+        try
+        {
+            EnsureStateStorage();
+
+            var applied = LoadApplied();
+            var migrations = GetMigrations();
+
+            var pendingMigrations = migrations.Where(m => !applied.Contains(m.Id)).ToList();
+
+            if (pendingMigrations.Count == 0)
+            {
+                Log.Information("No pending migrations to apply");
+                return;
+            }
+
+            for (int i = 0; i < pendingMigrations.Count; i++)
+            {
+                var migration = pendingMigrations[i];
+                try
+                {
+                    Log.Information("Applying migration: {MigrationId}", migration.Id);
+                    UpdateMigrationStatus(true, migration.Id, i + 1, pendingMigrations.Count);
+                    migration.Apply();
+                    applied.Add(migration.Id);
+                    SaveApplied(applied);
+                    Log.Information("Migration completed: {MigrationId}", migration.Id);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Migration failed: {MigrationId}", migration.Id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "RunMigrations encountered an error");
+        }
+        finally
+        {
+            UpdateMigrationStatus(false);
+            _migrationsComplete.TrySetResult(true);
+            Log.Information("All migrations processed");
+        }
+    }
+
+    private static void UpdateMigrationStatus(bool isRunning, string? currentMigration = null, int step = 0, int stepCount = 0)
+    {
+        IsRunning = isRunning;
+        CurrentMigration = currentMigration;
+        _step = step;
+        _stepCount = stepCount;
+        _progress = _progressTotal = null;
+        _progressUnit = null;
+        SendStatus();
+    }
+
+    // Throttled so a migration over thousands of items doesn't flood the frontend
+    private static void ReportProgress(int done, int total, string unit)
+    {
+        _progress = done;
+        _progressTotal = total;
+        _progressUnit = unit;
+        long now = Environment.TickCount64;
+        if (done > 0 && done < total && now - _progressSentAt < 250) return;
+        _progressSentAt = now;
+        SendStatus();
+    }
+
+    private static void SendStatus()
+    {
+        if (!Program.IsFirstRun)
+        {
+            _ = MessageService.SendFrontendMessage("MigrationStatus", Status);
+        }
+    }
+
+    // Runs the action on every video with metadata that matches the filter, reporting progress. Returns how many matched.
+    private static int ForEachVideo(string migrationId, Func<Content, bool> filter, Action<Content> action)
+    {
+        var videos = new List<Content>();
+        foreach (Content.ContentType type in Enum.GetValues<Content.ContentType>())
+        {
+            string metadataFolder = FolderNames.GetMetadataFolderPath(type);
+            if (!Directory.Exists(metadataFolder)) continue;
+
+            foreach (var metadataFilePath in Directory.EnumerateFiles(metadataFolder, "*.json"))
+            {
+                try
+                {
+                    var content = JsonSerializer.Deserialize<Content>(File.ReadAllText(metadataFilePath));
+                    if (content != null && File.Exists(content.FilePath) && filter(content))
+                        videos.Add(content);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Migration {MigrationId}: failed to read {File}", migrationId, metadataFilePath);
+                }
+            }
+        }
+
+        ReportProgress(0, videos.Count, "videos");
+        for (int i = 0; i < videos.Count; i++)
+        {
+            try
+            {
+                action(videos[i]);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Migration {MigrationId}: failed for {File}", migrationId, videos[i].FilePath);
+            }
+            ReportProgress(i + 1, videos.Count, "videos");
+        }
+        return videos.Count;
+    }
+
+    private static HashSet<string> LoadApplied()
+    {
+        try
+        {
+            if (!File.Exists(AppliedPath)) return new();
+            var json = File.ReadAllText(AppliedPath);
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (doc.RootElement.TryGetProperty("applied", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var el in arr.EnumerateArray())
+                {
+                    if (el.ValueKind == System.Text.Json.JsonValueKind.String)
+                        set.Add(el.GetString() ?? string.Empty);
+                }
+            }
+            return set;
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    private static void SaveApplied(HashSet<string> applied)
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(new { applied = applied.ToArray() });
+            File.WriteAllText(AppliedPath, json);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed saving applied migrations state");
+        }
+    }
+
+    private static void EnsureStateStorage()
+    {
+        try
+        {
+            if (!Directory.Exists(MigrationsFolder))
+            {
+                var dir = Directory.CreateDirectory(MigrationsFolder);
+                try { dir.Attributes |= FileAttributes.Hidden; } catch { /* ignore */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed ensuring migrations folder");
+        }
+    }
+
+    private static List<Migration> GetMigrations()
+    {
+        return
+        [
+            new("0001_waveforms_json", Apply_0001_WaveformsJson),
+            new("0002_hide_dotfolders", Apply_0002_HideDotfolders),
+            new("0003_delete_legacy_games_files", Apply_0003_DeleteLegacyGamesFiles),
+            new("0004_game_path_to_paths", Apply_0004_GamePathToPaths),
+            new("0005_clip_cpu_defaults", Apply_0005_ClipCpuDefaults),
+            new("0006_organize_files_by_game", Apply_0006_OrganizeFilesByGame),
+            new("0007_rename_video_folders", Apply_0007_RenameVideoFolders),
+            new("0008_move_metadata_to_appdata", Apply_0008_MoveMetadataToAppData),
+            new("0009_rename_clip_clear_selections_setting", Apply_0009_RenameClipClearSelectionsSetting),
+            new("0010_rename_titled_content_files", Apply_0010_RenameTitledContentFiles),
+            new("0011_whitelist_blacklist_to_games", Apply_0011_WhitelistBlacklistToGames),
+            new("0012_backfill_custom_game_icons", Apply_0012_BackfillCustomGameIcons),
+            new("0013_backfill_compressed_flag", Apply_0013_BackfillCompressedFlag),
+            new("0014_id_keyed_sidecars", Apply_0014_IdKeyedSidecars),
+            new("0015_delete_empty_game_folders", Apply_0015_DeleteEmptyGameFolders),
+            new("0016_copy_compress_10mb_to_20mb", Apply_0016_CopyCompress10MbTo20Mb),
+            new("0017_per_device_input_options", Apply_0017_PerDeviceInputOptions),
+            new("0018_embed_metadata_in_videos", Apply_0018_EmbedMetadataInVideos),
+            new("0019_index_first_in_clips", Apply_0019_IndexFirstInClips),
+            new("0020_remove_legacy_nvenc_presets", Apply_0020_RemoveLegacyNvencPresets)
+        ];
+    }
+
+    // Migration 0020: FFmpeg removed the legacy NVENC presets (hp, hq, ll, ...), so clips with them fail to encode.
+    private static void Apply_0020_RemoveLegacyNvencPresets()
+    {
+        try
+        {
+            var settings = Settings.Instance;
+            string? replacement = settings.ClipPreset switch
+            {
+                "hq" or "bd" or "llhq" => "slow",
+                "hp" or "ll" or "llhp" or "losslesshp" => "fast",
+                "lossless" => "medium",
+                _ => null
+            };
+            if (replacement == null) return;
+
+            Log.Information($"ClipPreset changed from '{settings.ClipPreset}' to '{replacement}' (legacy NVENC preset)");
+            settings.ClipPreset = replacement;
+            SettingsService.SaveSettings();
+            _ = MessageService.SendSettingsToFrontend("Migrated legacy NVENC clip preset");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to migrate legacy NVENC clip preset");
+        }
+    }
+
+    // Migration 0019: 0018 moved the index of faststart videos (clips, highlights, compressed videos)
+    // to the end of the file, so they no longer stream. Move it back to the front.
+    private static void Apply_0019_IndexFirstInClips()
+    {
+        ForEachVideo("0019", EmbeddedMetadataService.KeepsIndexFirst, c => EmbeddedMetadataService.EmbedAsync(c).GetAwaiter().GetResult());
+    }
+
+    // Migration 0018: Game, title, bookmarks etc. are now stored in the video file as well, so import
+    // and recovery can restore them. Write them into existing videos.
+    private static void Apply_0018_EmbedMetadataInVideos()
+    {
+        int count = ForEachVideo("0018", _ => true, c => EmbeddedMetadataService.EmbedAsync(c).GetAwaiter().GetResult());
+        Log.Information("Checked embedded metadata in {Count} videos", count);
+    }
+
+    // Migration 0017: Noise suppression and force mono moved from global settings to each input device.
+    // Copy the old global values onto every selected input device. A missing key used the old defaults.
+    private static void Apply_0017_PerDeviceInputOptions()
+    {
+        try
+        {
+            var settings = Settings.Instance;
+            bool noiseSuppression = settings.InputNoiseSuppression ?? true;
+            bool forceMono = settings.ForceMonoInputSources ?? false;
+
+            settings.InputDevices = settings.InputDevices
+                .Select(d => new DeviceSetting
+                {
+                    Id = d.Id,
+                    Name = d.Name,
+                    Volume = d.Volume,
+                    NoiseSuppression = noiseSuppression,
+                    ForceMono = forceMono
+                })
+                .ToList();
+            settings.InputNoiseSuppression = null;
+            settings.ForceMonoInputSources = null;
+
+            SettingsService.SaveSettings();
+            _ = MessageService.SendSettingsToFrontend("Migrated input device options");
+            Log.Information($"Applied noiseSuppression={noiseSuppression}, forceMono={forceMono} to {settings.InputDevices.Count} input devices");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to migrate input device options");
+        }
+    }
+
+    // Migration 0016: The default "Copy as X MB" sizes changed from 10/50/100/500 to 20/50/100/500.
+    // Update users still on the old default; customized lists are left alone.
+    private static void Apply_0016_CopyCompress10MbTo20Mb()
+    {
+        try
+        {
+            var settings = Settings.Instance;
+            if (!settings.CopyCompressSizesMb.SequenceEqual([10, 50, 100, 500]))
+            {
+                Log.Debug("CopyCompressSizesMb is customized, skipping migration");
+                return;
+            }
+
+            settings.CopyCompressSizesMb = [20, 50, 100, 500];
+            SettingsService.SaveSettings();
+            _ = MessageService.SendSettingsToFrontend("Migrated copy compress sizes");
+            Log.Information("Updated CopyCompressSizesMb default from 10 MB to 20 MB");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to migrate CopyCompressSizesMb default");
+        }
+    }
+
+    // Migration 0015: The post-delete cleanup of empty game folders never matched on Windows,
+    // leaving empty folders behind. Remove them.
+    private static void Apply_0015_DeleteEmptyGameFolders()
+    {
+        string contentRoot = Settings.Instance.ContentFolder;
+        string[] rootFolders = [FolderNames.Sessions, FolderNames.Buffers, FolderNames.Clips, FolderNames.Highlights];
+        int deletedCount = 0;
+
+        foreach (var rootFolder in rootFolders)
+        {
+            string typeFolder = Path.Combine(contentRoot, rootFolder);
+            if (!Directory.Exists(typeFolder)) continue;
+
+            foreach (var gameFolder in Directory.GetDirectories(typeFolder))
+            {
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(gameFolder).Any())
+                    {
+                        Directory.Delete(gameFolder);
+                        deletedCount++;
+                        Log.Information("Migration 0015: deleted empty game folder {Folder}", gameFolder);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Migration 0015: failed to delete folder {Folder}", gameFolder);
+                }
+            }
+        }
+
+        if (deletedCount > 0)
+        {
+            Log.Information("Deleted {Count} empty game folders", deletedCount);
+        }
+    }
+
+    // Migration 0014: Metadata, thumbnails and waveforms used to be named after the video file, so
+    // renaming had to move all of them and titles collided across game folders. Give every content an
+    // id and rename its sidecars to it. Video files are left alone.
+    private static void Apply_0014_IdKeyedSidecars()
+    {
+        int updatedCount = 0;
+
+        foreach (Content.ContentType type in Enum.GetValues<Content.ContentType>())
+        {
+            string metadataFolder = FolderNames.GetMetadataFolderPath(type);
+            if (!Directory.Exists(metadataFolder)) continue;
+
+            foreach (var metadataFilePath in Directory.EnumerateFiles(metadataFolder, "*.json").ToList())
+            {
+                try
+                {
+                    var content = JsonSerializer.Deserialize<Content>(File.ReadAllText(metadataFilePath));
+                    if (content == null) continue;
+
+                    if (ContentService.EnsureContentId(metadataFilePath, content))
+                        updatedCount++;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Migration 0014: failed for {File}", metadataFilePath);
+                }
+            }
+        }
+
+        if (updatedCount > 0)
+        {
+            SettingsService.LoadContentFromFolderIntoState(awaitMigrations: false).GetAwaiter().GetResult();
+            Log.Information("Moved {Count} content entries onto id-keyed metadata, thumbnails and waveforms", updatedCount);
+        }
+    }
+
+    // Migration 0013: Compressed files used to be identifiable only by their "_compressed" file name
+    // suffix. Mark them as compressed in metadata and rename them to the current scheme, where the
+    // compressed file keeps the original name and only falls back to " (1)", " (2)" on collision.
+    private static void Apply_0013_BackfillCompressedFlag()
+    {
+        const string suffix = "_compressed";
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        int updatedCount = 0;
+        int renamedCount = 0;
+
+        foreach (Content.ContentType type in Enum.GetValues<Content.ContentType>())
+        {
+            string metadataFolder = FolderNames.GetMetadataFolderPath(type);
+            if (!Directory.Exists(metadataFolder)) continue;
+
+            string thumbnailsFolder = FolderNames.GetThumbnailsFolderPath(type);
+            string waveformsFolder = FolderNames.GetWaveformsFolderPath(type);
+
+            foreach (var metadataFilePath in Directory.EnumerateFiles(metadataFolder, "*.json").ToList())
+            {
+                try
+                {
+                    string json = File.ReadAllText(metadataFilePath);
+                    var content = JsonSerializer.Deserialize<Content>(json);
+                    if (content == null || content.Compressed) continue;
+                    if (!content.FileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    content.Compressed = true;
+                    string oldFileName = content.FileName;
+                    string targetMetadataPath = metadataFilePath;
+
+                    // Files compressed more than once carry the suffix once per pass.
+                    string baseName = oldFileName;
+                    while (baseName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                        baseName = baseName[..^suffix.Length];
+
+                    string currentFilePath = content.FilePath;
+                    if (!string.IsNullOrWhiteSpace(baseName) && File.Exists(currentFilePath))
+                    {
+                        string dir = PathUtils.Normalize(Path.GetDirectoryName(currentFilePath) ?? string.Empty);
+                        string ext = Path.GetExtension(currentFilePath);
+
+                        string candidatePath = PathUtils.Combine(dir, $"{baseName}{ext}");
+                        string candidateName = baseName;
+                        int counter = 1;
+                        while (File.Exists(candidatePath) || File.Exists(PathUtils.Combine(metadataFolder, $"{candidateName}.json")))
+                        {
+                            candidateName = $"{baseName} ({counter})";
+                            candidatePath = PathUtils.Combine(dir, $"{candidateName}{ext}");
+                            counter++;
+                        }
+
+                        File.Move(currentFilePath, candidatePath);
+                        Log.Information("Migration 0013: renamed video {Old} -> {New}", currentFilePath, candidatePath);
+
+                        string oldThumbnail = PathUtils.Combine(thumbnailsFolder, $"{oldFileName}.jpeg");
+                        if (File.Exists(oldThumbnail))
+                            File.Move(oldThumbnail, PathUtils.Combine(thumbnailsFolder, $"{candidateName}.jpeg"), true);
+
+                        string oldWaveform = PathUtils.Combine(waveformsFolder, $"{oldFileName}.peaks.json");
+                        if (File.Exists(oldWaveform))
+                            File.Move(oldWaveform, PathUtils.Combine(waveformsFolder, $"{candidateName}.peaks.json"), true);
+
+                        content.FileName = candidateName;
+                        content.FilePath = candidatePath;
+                        targetMetadataPath = PathUtils.Combine(metadataFolder, $"{candidateName}.json");
+                        renamedCount++;
+                    }
+
+                    File.WriteAllText(targetMetadataPath, JsonSerializer.Serialize(content, jsonOptions));
+                    if (!string.Equals(targetMetadataPath, metadataFilePath, StringComparison.OrdinalIgnoreCase))
+                        File.Delete(metadataFilePath);
+                    updatedCount++;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Migration 0013: failed for {File}", metadataFilePath);
+                }
+            }
+        }
+
+        if (updatedCount > 0)
+        {
+            SettingsService.LoadContentFromFolderIntoState(awaitMigrations: false).GetAwaiter().GetResult();
+            Log.Information("Marked {Count} existing files as compressed ({Renamed} renamed)", updatedCount, renamedCount);
+        }
+    }
+
+    // Migration 0012: Backfill exe icons for custom games that have no icon yet (e.g. games migrated
+    // by an earlier build of 0011 that didn't extract icons). Idempotent: only fills games with no
+    // catalog link and no icon whose executable still exists on disk; catalog games are left to the
+    // name-based reconciliation, which gives them their CDN icon.
+    private static void Apply_0012_BackfillCustomGameIcons()
+    {
+        try
+        {
+            bool changed = false;
+            foreach (var game in Settings.Instance.Games)
+            {
+                if (game.IgdbId != null || game.Icon != null || game.CustomIcon != null) continue;
+
+                string? icon = ExtractCustomIcon(game.Paths);
+                if (icon != null)
+                {
+                    game.CustomIcon = icon;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                SettingsService.SaveSettings();
+                _ = MessageService.SendSettingsToFrontend("Backfilled custom game icons");
+                Log.Information("Backfilled exe icons for custom games that were missing one");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to backfill custom game icons");
+        }
+    }
+
+    // Migration 0011: Convert the pre-rework whitelist/blacklist into the unified Games list.
+    // whitelist -> Record = true (always record), blacklist -> Record = false (never record).
+    // Same-named entries are merged (paths unioned) with whitelist winning, matching the old
+    // "check whitelist first" precedence. The legacy lists are then nulled so they stop being persisted.
+    private static void Apply_0011_WhitelistBlacklistToGames()
+    {
+        try
+        {
+            var settings = Settings.Instance;
+            var whitelist = settings.Whitelist ?? new List<Game>();
+            var blacklist = settings.Blacklist ?? new List<Game>();
+
+            if (whitelist.Count == 0 && blacklist.Count == 0)
+            {
+                Log.Debug("No legacy whitelist/blacklist to migrate");
+                return;
+            }
+
+            // Key by name (the new model's unique key), seeding from any games that already exist.
+            var byName = new Dictionary<string, GameSetting>(StringComparer.OrdinalIgnoreCase);
+            foreach (var game in settings.Games)
+                byName[game.Name] = game;
+
+            MergeLegacyGames(whitelist, record: true, byName);
+            MergeLegacyGames(blacklist, record: false, byName);
+
+            settings.Games = byName.Values.ToList();
+            settings.Whitelist = null;
+            settings.Blacklist = null;
+
+            SettingsService.SaveSettings();
+            // Push the migrated list so the UI reflects it without needing a restart.
+            _ = MessageService.SendSettingsToFrontend("Migrated whitelist/blacklist to games");
+            Log.Information("Migrated legacy whitelist/blacklist into {Count} unified game entries", settings.Games.Count);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to migrate legacy whitelist/blacklist into games");
+        }
+    }
+
+    private static void MergeLegacyGames(List<Game> legacyGames, bool record, Dictionary<string, GameSetting> target)
+    {
+        foreach (var legacy in legacyGames)
+        {
+            if (string.IsNullOrEmpty(legacy.Name)) continue;
+
+            var paths = new List<string>(legacy.Paths);
+            // Fall back to the even older single `path` field if no `paths` array was present.
+            if (paths.Count == 0 && !string.IsNullOrEmpty(legacy.Path))
+                paths.Add(legacy.Path);
+            if (paths.Count == 0) continue;
+
+            if (target.TryGetValue(legacy.Name, out var existing))
+            {
+                foreach (var path in paths)
+                {
+                    if (!existing.Paths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        existing.Paths.Add(path);
+                }
+                // Whitelist (record == true) wins over blacklist when the same name is in both.
+                existing.Record = existing.Record || record;
+                existing.CustomIcon ??= ExtractCustomIcon(paths);
+            }
+            else
+            {
+                target[legacy.Name] = new GameSetting
+                {
+                    Name = legacy.Name,
+                    Paths = paths,
+                    Record = record,
+                    CustomIcon = ExtractCustomIcon(paths)
+                };
+            }
+        }
+    }
+
+    // Extracts the executable icon for a custom (non-catalog) game, mirroring what the "Add Custom"
+    // flow does. Catalog games' stored paths are executable patterns (not real files) so extraction
+    // returns null for them; their CDN icon is filled in by the catalog reconciliation by name instead.
+    private static string? ExtractCustomIcon(List<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            string? icon = IconUtils.ExtractExeIconBase64(path);
+            if (icon != null) return icon;
+        }
+        return null;
+    }
+
+    // Migration 0009: Rename clipClearSelectionsAfterCreatingClip -> clipClearSegmentsAfterCreatingClip
+    // "Selections" in the UI was renamed to "Segments"; rewrite the persisted settings key so the
+    // previously saved preference survives the rename.
+    private static void Apply_0009_RenameClipClearSelectionsSetting()
+    {
+        try
+        {
+            string settingsPath = SettingsService.SettingsFilePath;
+            if (!File.Exists(settingsPath))
+            {
+                Log.Debug("Settings file not found, skipping clipClearSelections rename migration");
+                return;
+            }
+
+            string json = File.ReadAllText(settingsPath);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("clipClearSelectionsAfterCreatingClip", out var oldValue))
+            {
+                Log.Debug("clipClearSelectionsAfterCreatingClip not present in settings, skipping");
+                return;
+            }
+
+            // Build a new object with the renamed key, preserving all others
+            var newObj = new Dictionary<string, JsonElement>();
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (prop.Name == "clipClearSelectionsAfterCreatingClip")
+                {
+                    newObj["clipClearSegmentsAfterCreatingClip"] = oldValue;
+                }
+                else
+                {
+                    newObj[prop.Name] = prop.Value.Clone();
+                }
+            }
+
+            var updatedJson = JsonSerializer.Serialize(newObj, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(settingsPath, updatedJson);
+            Log.Information("Migrated settings key clipClearSelectionsAfterCreatingClip -> clipClearSegmentsAfterCreatingClip");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to rename clipClearSelectionsAfterCreatingClip setting key");
+        }
+    }
+
+    // Migration 0001: Remove legacy .audio folder and generate waveform JSONs for existing content
+    private static void Apply_0001_WaveformsJson()
+    {
+        string contentRoot = Settings.Instance.ContentFolder;
+
+        // 1) Remove the legacy .audio folder if present
+        try
+        {
+            string audioFolder = Path.Combine(contentRoot, ".audio");
+            if (Directory.Exists(audioFolder))
+            {
+                Log.Information("Deleting legacy audio folder: {Path}", audioFolder);
+                Directory.Delete(audioFolder, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to delete legacy .audio folder");
+        }
+
+        // 2) Generate waveform JSONs for each mp4 if missing
+        foreach (Content.ContentType type in Enum.GetValues(typeof(Content.ContentType)))
+        {
+            string typeFolder = Path.Combine(contentRoot, type.ToString().ToLower() + "s");
+            if (!Directory.Exists(typeFolder)) continue;
+
+            string targetWaveformFolder = Path.Combine(contentRoot, ".waveforms", type.ToString().ToLower() + "s");
+            if (!Directory.Exists(targetWaveformFolder))
+            {
+                var dir = Directory.CreateDirectory(targetWaveformFolder);
+                try { dir.Attributes |= FileAttributes.Hidden; } catch { /* ignore */ }
+            }
+
+            foreach (var mp4 in Directory.EnumerateFiles(typeFolder, "*.mp4", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    string name = Path.GetFileNameWithoutExtension(mp4);
+                    string jsonPath = Path.Combine(targetWaveformFolder, name + ".peaks.json");
+                    if (File.Exists(jsonPath))
+                    {
+                        Log.Debug("Waveform already exists, skipping: {Path}", jsonPath);
+                        continue;
+                    }
+
+                    // Pre-dates content ids: key the waveform by file name, which 0014 renames to the id
+                    Log.Information("Generating waveform for: {File}", mp4);
+                    _ = Task.Run(async () => await ContentService.CreateWaveformFile(mp4, type, name));
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed generating waveform for file in migration: {File}", mp4);
+                }
+            }
+        }
+    }
+
+    // Migration 0002: Mark all top-level dotfolders under content root as Hidden
+    private static void Apply_0002_HideDotfolders()
+    {
+        string contentRoot = Settings.Instance.ContentFolder;
+        if (!Directory.Exists(contentRoot)) return;
+
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(contentRoot, ".*", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var di = new DirectoryInfo(dir);
+                    // Only mark hidden if it starts with '.'
+                    if (di.Name.StartsWith('.'))
+                    {
+                        di.Attributes |= FileAttributes.Hidden;
+                        Log.Information("Ensured hidden attribute on folder: {Folder}", di.FullName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Failed to set hidden attribute on folder: {Folder}", dir);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Error while enumerating dotfolders for hidden attribute");
+        }
+    }
+
+    // Migration 0003: Delete legacy games.json and games.hash files from AppData
+    private static void Apply_0003_DeleteLegacyGamesFiles()
+    {
+        try
+        {
+            string gamesHashPath = Path.Combine(appDataDir, "games.hash");
+            string gamesJsonPath = Path.Combine(appDataDir, "games.json");
+
+            // Only proceed if games.hash exists
+            if (File.Exists(gamesHashPath))
+            {
+                Log.Information("Deleting legacy games.hash file: {Path}", gamesHashPath);
+                File.Delete(gamesHashPath);
+
+                if (File.Exists(gamesJsonPath))
+                {
+                    Log.Information("Deleting legacy games.json file: {Path}", gamesJsonPath);
+                    File.Delete(gamesJsonPath);
+                }
+            }
+            else
+            {
+                Log.Debug("No legacy games files found to delete");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to delete legacy games files");
+        }
+    }
+
+    // Migration 0004: Convert Game.path to Game.paths array
+    // Obsolete: the legacy whitelist/blacklist (including the singular `path` field) are now converted
+    // into the unified Games list during settings load, so there is nothing left to migrate here.
+    private static void Apply_0004_GamePathToPaths()
+    {
+        Log.Debug("Migration 0004 is obsolete (legacy game lists are migrated during settings load)");
+    }
+
+    // Migration 0005: Update clip settings to use CPU encoder by default instead of GPU
+    private static void Apply_0005_ClipCpuDefaults()
+    {
+        try
+        {
+            bool needsSave = false;
+            var settings = Settings.Instance;
+
+            // Migrate if user has old GPU-based quality presets (low, standard, or high)
+            // Old presets used GPU encoder with vendor-specific presets
+
+            string qualityPreset = settings.ClipQualityPreset.ToLower();
+            bool isOldQualityPreset = qualityPreset == "low" || qualityPreset == "standard" || qualityPreset == "high";
+            bool isUsingGpuEncoder = settings.ClipEncoder.Equals("gpu", StringComparison.OrdinalIgnoreCase);
+
+            if (isOldQualityPreset && isUsingGpuEncoder)
+            {
+                Log.Information("Migrating clip quality preset '{Preset}' from GPU to CPU encoder", settings.ClipQualityPreset);
+
+                // Switch to CPU encoder - keep the same quality preset (low/standard/high)
+                // The preset will now apply CPU-specific settings instead of GPU settings
+                settings.ClipEncoder = "cpu";
+
+                // Apply appropriate CPU settings based on the quality preset
+                switch (qualityPreset)
+                {
+                    case "low":
+                        settings.ClipQualityCpu = 28;
+                        settings.ClipAudioQuality = "96k";
+                        settings.ClipPreset = "ultrafast";
+                        settings.ClipFps = 30;
+                        break;
+                    case "standard":
+                        settings.ClipQualityCpu = 23;
+                        settings.ClipAudioQuality = "128k";
+                        settings.ClipPreset = "veryfast";
+                        settings.ClipFps = 60;
+                        break;
+                    case "high":
+                        settings.ClipQualityCpu = 20;
+                        settings.ClipAudioQuality = "192k";
+                        settings.ClipPreset = "medium";
+                        settings.ClipFps = 60;
+                        break;
+                }
+
+                needsSave = true;
+                Log.Information("Clip settings migrated to CPU: qualityPreset={Preset}, encoder=cpu, qualityCpu={Quality}, audioQuality={Audio}, preset={Preset}, fps={Fps}",
+                    settings.ClipQualityPreset, settings.ClipQualityCpu, settings.ClipAudioQuality, settings.ClipPreset, settings.ClipFps);
+            }
+            else
+            {
+                Log.Debug("Clip settings don't match old defaults, skipping migration");
+            }
+
+            if (needsSave)
+            {
+                SettingsService.SaveSettings();
+                Log.Information("Clip CPU defaults migration completed");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to migrate clip settings to CPU defaults");
+        }
+    }
+
+    // Migration 0006: Organize existing video files by game
+    // Moves files from flat structure (sessions/file.mp4) to game-based structure (sessions/GameName/file.mp4)
+    private static void Apply_0006_OrganizeFilesByGame()
+    {
+        try
+        {
+            string contentRoot = Settings.Instance.ContentFolder;
+            string metadataRoot = Path.Combine(contentRoot, ".metadata");
+
+            if (!Directory.Exists(metadataRoot))
+            {
+                Log.Information("No metadata folder found, skipping file organization migration");
+                return;
+            }
+
+            int movedCount = 0;
+            int errorCount = 0;
+
+            foreach (Content.ContentType type in Enum.GetValues(typeof(Content.ContentType)))
+            {
+                string typeName = type.ToString().ToLower() + "s";
+                string metadataFolder = Path.Combine(metadataRoot, typeName);
+                string videoFolder = Path.Combine(contentRoot, typeName);
+
+                if (!Directory.Exists(metadataFolder))
+                {
+                    Log.Debug("No metadata folder for {Type}, skipping", typeName);
+                    continue;
+                }
+
+                foreach (var metadataFilePath in Directory.EnumerateFiles(metadataFolder, "*.json", SearchOption.TopDirectoryOnly))
+                {
+                    try
+                    {
+                        string metadataJson = File.ReadAllText(metadataFilePath);
+                        var metadata = JsonSerializer.Deserialize<Content>(metadataJson);
+
+                        if (metadata == null)
+                        {
+                            Log.Warning("Failed to deserialize metadata: {Path}", metadataFilePath);
+                            continue;
+                        }
+
+                        string currentFilePath = metadata.FilePath;
+
+                        if (string.IsNullOrEmpty(currentFilePath) || !File.Exists(currentFilePath))
+                        {
+                            Log.Debug("Video file not found or path empty for metadata: {Path}", metadataFilePath);
+                            continue;
+                        }
+
+                        string currentDir = Path.GetDirectoryName(currentFilePath) ?? "";
+                        string expectedFlatDir = videoFolder.Replace("\\", "/");
+                        string actualDir = currentDir.Replace("\\", "/");
+
+                        // Check if file is already in a subfolder (not directly in sessions/buffers/clips/highlights)
+                        if (!actualDir.Equals(expectedFlatDir, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Log.Debug("File already in subfolder, skipping: {Path}", currentFilePath);
+                            continue;
+                        }
+
+                        string gameName = metadata.Game ?? "Unknown";
+                        string sanitizedGameName = StorageService.SanitizeGameNameForFolder(gameName);
+
+                        string fileName = Path.GetFileName(currentFilePath);
+                        string newDir = Path.Combine(videoFolder, sanitizedGameName);
+                        string newFilePath = Path.Combine(newDir, fileName);
+
+                        if (!Directory.Exists(newDir))
+                        {
+                            Directory.CreateDirectory(newDir);
+                            Log.Information("Created game folder: {Folder}", newDir);
+                        }
+
+                        Log.Information("Moving {OldPath} to {NewPath}", currentFilePath, newFilePath);
+                        File.Move(currentFilePath, newFilePath);
+
+                        metadata.FilePath = newFilePath;
+                        string updatedMetadataJson = JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true });
+                        File.WriteAllText(metadataFilePath, updatedMetadataJson);
+
+                        movedCount++;
+                        Log.Information("Successfully migrated: {FileName} -> {GameFolder}", fileName, sanitizedGameName);
+                    }
+                    catch (Exception ex)
+                    {
+                        errorCount++;
+                        Log.Error(ex, "Failed to migrate file for metadata: {Path}", metadataFilePath);
+                    }
+                }
+            }
+
+            Log.Information("File organization migration completed. Moved: {Moved}, Errors: {Errors}", movedCount, errorCount);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to organize files by game");
+        }
+    }
+
+    // Migration 0007: Rename video folders from legacy names to new names
+    // sessions -> Full Sessions, buffers -> Replay Buffers, clips -> Clips, highlights -> Highlights
+    private static void Apply_0007_RenameVideoFolders()
+    {
+        try
+        {
+            string contentRoot = Settings.Instance.ContentFolder;
+            if (!Directory.Exists(contentRoot))
+            {
+                Log.Information("Content folder does not exist, skipping video folder rename migration");
+                return;
+            }
+
+            int renamedCount = 0;
+            int errorCount = 0;
+
+            // Define the folder renames (legacy name -> new name)
+            var folderRenames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { FolderNames.LegacySessions, FolderNames.Sessions },
+                { FolderNames.LegacyBuffers, FolderNames.Buffers },
+                { FolderNames.LegacyClips, FolderNames.Clips },
+                { FolderNames.LegacyHighlights, FolderNames.Highlights }
+            };
+
+            // Get actual folder names from the file system to handle case-sensitivity properly
+            foreach (var existingDir in Directory.GetDirectories(contentRoot))
+            {
+                string actualFolderName = Path.GetFileName(existingDir);
+
+                // Check if this folder matches any of our legacy names (case-insensitive)
+                if (!folderRenames.TryGetValue(actualFolderName, out string? newFolderName))
+                {
+                    continue; // Not a folder we need to rename
+                }
+
+                // Check if rename is actually needed (case-sensitive comparison)
+                if (actualFolderName == newFolderName)
+                {
+                    Log.Debug("Folder already has correct name: {Path}", existingDir);
+                    continue;
+                }
+
+                string newPath = Path.Combine(contentRoot, newFolderName);
+
+                try
+                {
+                    // On Windows, renaming just for case change requires a two-step process
+                    // because the file system is case-insensitive
+                    if (actualFolderName.Equals(newFolderName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Case-only rename: use temp folder
+                        string tempPath = existingDir + "_temp_rename";
+                        Log.Information("Case-only rename: {OldPath} -> {TempPath} -> {NewPath}", existingDir, tempPath, newPath);
+                        Directory.Move(existingDir, tempPath);
+                        Directory.Move(tempPath, newPath);
+                    }
+                    else
+                    {
+                        // Different name, direct rename
+                        Log.Information("Renaming folder: {OldPath} -> {NewPath}", existingDir, newPath);
+                        Directory.Move(existingDir, newPath);
+                    }
+                    renamedCount++;
+                    Log.Information("Successfully renamed folder: {OldName} -> {NewName}", actualFolderName, newFolderName);
+                }
+                catch (Exception ex)
+                {
+                    errorCount++;
+                    Log.Error(ex, "Failed to rename folder: {OldPath} -> {NewPath}", existingDir, newPath);
+                }
+            }
+
+            // Update metadata files with new file paths
+            // Check BOTH old location (.metadata in content folder) AND new location (AppData/Segra/metadata)
+            int updatedCount = 0;
+            var metadataLocations = new List<(string root, bool useLegacySubfolders)>
+            {
+                (Path.Combine(contentRoot, FolderNames.LegacyMetadata), true),  // Old location with legacy subfolder names
+                (Path.Combine(FolderNames.CacheFolder, FolderNames.Metadata), false)  // New location with new subfolder names
+            };
+
+            foreach (var (metadataRoot, useLegacySubfolders) in metadataLocations)
+            {
+                if (!Directory.Exists(metadataRoot))
+                {
+                    Log.Debug("Metadata root does not exist, skipping: {Path}", metadataRoot);
+                    continue;
+                }
+
+                foreach (Content.ContentType type in Enum.GetValues(typeof(Content.ContentType)))
+                {
+                    string subfolderName = useLegacySubfolders
+                        ? FolderNames.GetLegacyVideoFolderName(type)
+                        : FolderNames.GetVideoFolderName(type);
+                    string metadataFolder = Path.Combine(metadataRoot, subfolderName);
+
+                    if (!Directory.Exists(metadataFolder))
+                    {
+                        Log.Debug("No metadata folder for {Type}, skipping path update", subfolderName);
+                        continue;
+                    }
+
+                    foreach (var metadataFilePath in Directory.EnumerateFiles(metadataFolder, "*.json", SearchOption.TopDirectoryOnly))
+                    {
+                        try
+                        {
+                            string metadataJson = File.ReadAllText(metadataFilePath);
+                            var metadata = JsonSerializer.Deserialize<Content>(metadataJson);
+
+                            if (metadata == null || string.IsNullOrEmpty(metadata.FilePath))
+                            {
+                                continue;
+                            }
+
+                            // Update the file path to use new folder names
+                            string updatedFilePath = metadata.FilePath;
+                            foreach (var rename in folderRenames)
+                            {
+                                // Replace legacy folder name with new folder name in the path
+                                string oldPathSegment = $"\\{rename.Key}\\";
+                                string newPathSegment = $"\\{rename.Value}\\";
+                                if (updatedFilePath.Contains(oldPathSegment, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    updatedFilePath = updatedFilePath.Replace(oldPathSegment, newPathSegment, StringComparison.OrdinalIgnoreCase);
+                                }
+                                // Also handle forward slashes
+                                oldPathSegment = $"/{rename.Key}/";
+                                newPathSegment = $"/{rename.Value}/";
+                                if (updatedFilePath.Contains(oldPathSegment, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    updatedFilePath = updatedFilePath.Replace(oldPathSegment, newPathSegment, StringComparison.OrdinalIgnoreCase);
+                                }
+                            }
+
+                            if (updatedFilePath != metadata.FilePath)
+                            {
+                                metadata.FilePath = updatedFilePath;
+                                string updatedMetadataJson = JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true });
+                                File.WriteAllText(metadataFilePath, updatedMetadataJson);
+                                updatedCount++;
+                                Log.Debug("Updated file path in metadata: {Path}", metadataFilePath);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex, "Failed to update metadata file path: {Path}", metadataFilePath);
+                        }
+                    }
+                }
+            }
+            Log.Information("Updated {Count} metadata files with new folder paths", updatedCount);
+
+            Log.Information("Video folder rename migration completed. Renamed: {Renamed}, Errors: {Errors}", renamedCount, errorCount);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to rename video folders");
+        }
+    }
+
+    // Migration 0008: Move metadata, thumbnails, and waveforms to AppData and make them visible
+    // .metadata, .thumbnails, .waveforms -> AppData/Roaming/Segra/metadata, thumbnails, waveforms
+    private static void Apply_0008_MoveMetadataToAppData()
+    {
+        try
+        {
+            string contentRoot = Settings.Instance.ContentFolder;
+            string cacheRoot = FolderNames.CacheFolder;
+
+            if (!Directory.Exists(contentRoot))
+            {
+                Log.Information("Content folder does not exist, skipping metadata move migration");
+                return;
+            }
+
+            // Ensure AppData folder exists
+            if (!Directory.Exists(cacheRoot))
+            {
+                Directory.CreateDirectory(cacheRoot);
+                Log.Information("Created cache folder: {Path}", cacheRoot);
+            }
+
+            int movedCount = 0;
+            int errorCount = 0;
+
+            // Remove .ai folder if it exists (not used in the application)
+            string aiFolder = Path.Combine(contentRoot, ".ai");
+            if (Directory.Exists(aiFolder))
+            {
+                try
+                {
+                    Directory.Delete(aiFolder, true);
+                    Log.Information("Deleted unused .ai folder: {Path}", aiFolder);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Failed to delete .ai folder: {Path}", aiFolder);
+                }
+            }
+
+            // Define the folder moves (source in contentFolder -> destination in AppData)
+            var folderMoves = new Dictionary<string, string>
+            {
+                { FolderNames.LegacyMetadata, FolderNames.Metadata },
+                { FolderNames.LegacyThumbnails, FolderNames.Thumbnails },
+                { FolderNames.LegacyWaveforms, FolderNames.Waveforms }
+            };
+
+            foreach (var move in folderMoves)
+            {
+                string sourcePath = Path.Combine(contentRoot, move.Key);
+                string destPath = Path.Combine(cacheRoot, move.Value);
+
+                if (!Directory.Exists(sourcePath))
+                {
+                    Log.Debug("Source folder does not exist, skipping: {Path}", sourcePath);
+                    continue;
+                }
+
+                try
+                {
+                    Log.Information("Moving folder: {Source} -> {Dest}", sourcePath, destPath);
+
+                    // Create destination folder if it doesn't exist
+                    if (!Directory.Exists(destPath))
+                    {
+                        Directory.CreateDirectory(destPath);
+                    }
+
+                    // Define subfolder renames (case-insensitive lookup)
+                    var subfolderRenames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        { FolderNames.LegacySessions, FolderNames.Sessions },
+                        { FolderNames.LegacyBuffers, FolderNames.Buffers },
+                        { FolderNames.LegacyClips, FolderNames.Clips },
+                        { FolderNames.LegacyHighlights, FolderNames.Highlights }
+                    };
+
+                    foreach (var subDir in Directory.GetDirectories(sourcePath))
+                    {
+                        string subDirName = Path.GetFileName(subDir);
+                        string destSubDir = Path.Combine(destPath, subDirName);
+
+                        // Check if this is a legacy subfolder name and needs renaming (case-insensitive)
+                        string newSubDirName = subDirName;
+                        if (subfolderRenames.TryGetValue(subDirName, out string? mappedName))
+                        {
+                            newSubDirName = mappedName;
+                        }
+
+                        if (newSubDirName != subDirName)
+                        {
+                            destSubDir = Path.Combine(destPath, newSubDirName);
+                            Log.Debug("Renaming subfolder during move: {Old} -> {New}", subDirName, newSubDirName);
+                        }
+
+                        if (!Directory.Exists(destSubDir))
+                        {
+                            Directory.CreateDirectory(destSubDir);
+                        }
+
+                        foreach (var file in Directory.GetFiles(subDir))
+                        {
+                            string fileName = Path.GetFileName(file);
+                            string destFile = Path.Combine(destSubDir, fileName);
+
+                            try
+                            {
+                                if (File.Exists(destFile))
+                                {
+                                    Log.Debug("Destination file already exists, skipping: {Path}", destFile);
+                                    continue;
+                                }
+
+                                File.Move(file, destFile);
+                                movedCount++;
+                            }
+                            catch (Exception ex)
+                            {
+                                errorCount++;
+                                Log.Error(ex, "Failed to move file: {Source} -> {Dest}", file, destFile);
+                            }
+                        }
+                    }
+
+                    // Also move any files directly in the source folder (shouldn't be many)
+                    foreach (var file in Directory.GetFiles(sourcePath))
+                    {
+                        string fileName = Path.GetFileName(file);
+                        string destFile = Path.Combine(destPath, fileName);
+
+                        try
+                        {
+                            if (File.Exists(destFile))
+                            {
+                                Log.Debug("Destination file already exists, skipping: {Path}", destFile);
+                                continue;
+                            }
+
+                            File.Move(file, destFile);
+                            movedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            errorCount++;
+                            Log.Error(ex, "Failed to move file: {Source} -> {Dest}", file, destFile);
+                        }
+                    }
+
+                    // Try to delete the old folder if empty
+                    try
+                    {
+                        if (Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories).Length == 0)
+                        {
+                            Directory.Delete(sourcePath, true);
+                            Log.Information("Deleted empty source folder: {Path}", sourcePath);
+                        }
+                        else
+                        {
+                            Log.Warning("Source folder not empty after move, keeping: {Path}", sourcePath);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to delete source folder: {Path}", sourcePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    errorCount++;
+                    Log.Error(ex, "Failed to move folder: {Source} -> {Dest}", sourcePath, destPath);
+                }
+            }
+
+            // Remove hidden attribute from AppData folders
+            try
+            {
+                var foldersToUnhide = new[]
+                {
+                    Path.Combine(cacheRoot, FolderNames.Metadata),
+                    Path.Combine(cacheRoot, FolderNames.Thumbnails),
+                    Path.Combine(cacheRoot, FolderNames.Waveforms)
+                };
+
+                foreach (var folder in foldersToUnhide)
+                {
+                    if (Directory.Exists(folder))
+                    {
+                        var di = new DirectoryInfo(folder);
+                        if ((di.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden)
+                        {
+                            di.Attributes &= ~FileAttributes.Hidden;
+                            Log.Information("Removed hidden attribute from folder: {Path}", folder);
+                        }
+
+                        // Also unhide all subfolders
+                        foreach (var subDir in Directory.GetDirectories(folder))
+                        {
+                            var subDi = new DirectoryInfo(subDir);
+                            if ((subDi.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden)
+                            {
+                                subDi.Attributes &= ~FileAttributes.Hidden;
+                                Log.Debug("Removed hidden attribute from subfolder: {Path}", subDir);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Error removing hidden attributes from folders");
+            }
+
+            SettingsService.LoadContentFromFolderIntoState(awaitMigrations: false).GetAwaiter().GetResult();
+            Log.Information("Metadata move migration completed. Moved files: {Moved}, Errors: {Errors}", movedCount, errorCount);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to move metadata to AppData");
+        }
+    }
+
+    // Migration 0010: Rename video/thumbnail/waveform/metadata files to match the user-assigned title
+    // Now that renaming a clip also renames its file on disk, retroactively apply that to existing titled content.
+    private static void Apply_0010_RenameTitledContentFiles()
+    {
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        var invalidChars = new HashSet<char>(Path.GetInvalidFileNameChars());
+
+        string SanitizeFileName(string title)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in title)
+                if (!invalidChars.Contains(c))
+                    sb.Append(c);
+            return sb.ToString().Trim();
+        }
+
+        foreach (Content.ContentType type in Enum.GetValues<Content.ContentType>())
+        {
+            string metadataFolder = FolderNames.GetMetadataFolderPath(type);
+            if (!Directory.Exists(metadataFolder)) continue;
+
+            foreach (var metadataFilePath in Directory.EnumerateFiles(metadataFolder, "*.json").ToList())
+            {
+                try
+                {
+                    string json = File.ReadAllText(metadataFilePath);
+                    var content = JsonSerializer.Deserialize<Content>(json);
+                    if (content == null || string.IsNullOrWhiteSpace(content.Title)) continue;
+
+                    if (content.Game == "Unknown") continue;
+
+                    string sanitized = SanitizeFileName(content.Title);
+                    if (string.IsNullOrWhiteSpace(sanitized)) continue;
+
+                    string currentFilePath = content.FilePath;
+                    if (!File.Exists(currentFilePath)) continue;
+
+                    string dir = PathUtils.Normalize(Path.GetDirectoryName(currentFilePath) ?? string.Empty);
+                    string ext = Path.GetExtension(currentFilePath);
+                    string candidatePath = PathUtils.Combine(dir, $"{sanitized}{ext}");
+
+                    if (string.Equals(candidatePath, PathUtils.Normalize(currentFilePath), StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (File.Exists(candidatePath))
+                    {
+                        int counter = 1;
+                        do
+                        {
+                            candidatePath = PathUtils.Combine(dir, $"{sanitized} ({counter}){ext}");
+                            counter++;
+                        } while (File.Exists(candidatePath));
+                    }
+
+                    string oldFileName = content.FileName;
+
+                    File.Move(currentFilePath, candidatePath);
+                    string newFileName = Path.GetFileNameWithoutExtension(candidatePath);
+                    Log.Information("Migration 0010: renamed video {Old} -> {New}", currentFilePath, candidatePath);
+
+                    string thumbnailsFolder = FolderNames.GetThumbnailsFolderPath(type);
+                    string oldThumbnail = PathUtils.Combine(thumbnailsFolder, $"{oldFileName}.jpeg");
+                    if (File.Exists(oldThumbnail))
+                        File.Move(oldThumbnail, PathUtils.Combine(thumbnailsFolder, $"{newFileName}.jpeg"));
+
+                    string waveformsFolder = FolderNames.GetWaveformsFolderPath(type);
+                    string oldWaveform = PathUtils.Combine(waveformsFolder, $"{oldFileName}.peaks.json");
+                    if (File.Exists(oldWaveform))
+                        File.Move(oldWaveform, PathUtils.Combine(waveformsFolder, $"{newFileName}.peaks.json"));
+
+                    content.FileName = newFileName;
+                    content.FilePath = candidatePath;
+                    string updatedJson = JsonSerializer.Serialize(content, jsonOptions);
+
+                    File.Delete(metadataFilePath);
+                    File.WriteAllText(PathUtils.Combine(metadataFolder, $"{newFileName}.json"), updatedJson);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Migration 0010: failed for {File}", metadataFilePath);
+                }
+            }
+        }
+
+        SettingsService.LoadContentFromFolderIntoState(awaitMigrations: false).GetAwaiter().GetResult();
+    }
+}

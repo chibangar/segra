@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Segra": {
+      "commandName": "Project",
+      "commandLineArgs": "--debug",
+      "nativeDebugging": true
+    }
+  }
+}

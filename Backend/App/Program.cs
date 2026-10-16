@@ -1,0 +1,1098 @@
+using Serilog;
+using Velopack;
+using Photino.NET;
+using System.IO.Pipes;
+using Segra.Backend.Api;
+using Segra.Backend.Core;
+using System.Diagnostics;
+using System.Drawing;
+using Segra.Backend.Shared;
+using Segra.Backend.Platform;
+using Segra.Backend.Recorder;
+using Segra.Backend.Core.Models;
+using Segra.Backend.Windows.Storage;
+using System.Reflection;
+using System.Runtime.InteropServices;
+#if WINDOWS
+using Segra.Backend.Windows.Input;
+using Segra.Backend.Windows.Power;
+using Segra.Backend.Windows.WebView2;
+#endif
+
+namespace Segra.Backend.App
+{
+    class Program
+    {
+#if WINDOWS
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        static extern bool SetProcessDPIAware();
+
+        [DllImport("user32.dll")]
+        static extern uint GetDpiForSystem();
+
+        [DllImport("user32.dll")]
+        static extern int GetSystemMetrics(int nIndex);
+
+        [DllImport("user32.dll")]
+        static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+
+        [DllImport("user32.dll")]
+        static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("kernel32.dll")]
+        static extern uint GetCurrentThreadId();
+
+        const int SW_RESTORE = 9;
+        const int SM_CXFULLSCREEN = 16;
+        const int SM_CYFULLSCREEN = 17;
+#endif
+        public static bool IsFirstRun { get; private set; } = false;
+        private static readonly AutoResetEvent ShowWindowEvent = new(false);
+        public static bool hasLoadedInitialSettings = false;
+        public static PhotinoWindow? Window { get; private set; }
+        private static PhotinoApplication? App;
+        private static readonly string LogFilePath =
+          Segra.Backend.Shared.PathUtils.Normalize(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra", "logs.log"));
+        private const string PipeName = "Segra_SingleInstance";
+        private static Mutex? singleInstanceMutex;
+        private static Thread? pipeServerThread;
+        private static string? appUrl;
+        private const long maxFileSizeBytes = 10 * 1024 * 1024; // 10MB
+        private const long trimTargetBytes = 8 * 1024 * 1024; // trim down to 8MB when limit is hit
+        private const string LogOutputTemplate =
+            "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}";
+
+        [STAThread]
+        static void Main(string[] args)
+        {
+#if WINDOWS
+            // Elevated helper mode: install the UIAccess hotkey broker, then exit. Runs before logging
+            // (the main instance holds the log file) and before the single-instance handshake.
+            if (args.Contains(Segra.Backend.Windows.Input.HotkeyBroker.HotkeyBrokerInstaller.InstallArgument))
+            {
+                Environment.ExitCode = Segra.Backend.Windows.Input.HotkeyBroker.HotkeyBrokerInstaller.RunInstallElevated();
+                return;
+            }
+#endif
+
+            PlatformServices.Initialize();
+
+#if WINDOWS
+            // Set process DPI aware to ensure we capture at physical resolution
+            SetProcessDPIAware();
+#else
+            // Re-exec once with LD_LIBRARY_PATH set so libobs is loadable (never returns on first launch).
+            Segra.Backend.Platform.Linux.LinuxObsRuntime.ConfigureAndReexecIfNeeded();
+#endif
+
+            // Pin the working directory to the app directory so relative-path lookups
+            // (OBS modules, bundled ffmpeg.exe) resolve regardless of how Segra was launched.
+            Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
+            // In debug mode, kill any existing instances before starting
+#if DEBUG
+            try
+            {
+                var currentProcess = Process.GetCurrentProcess();
+                var existingProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
+                    .Where(p => p.Id != currentProcess.Id);
+
+                foreach (var process in existingProcesses)
+                {
+                    Console.WriteLine($"[DEBUG] Killing existing instance: PID {process.Id}");
+                    process.Kill();
+                    process.WaitForExit(3000); // Wait up to 3 seconds for graceful exit
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG] Failed to kill existing instance: {ex.Message}");
+            }
+#endif
+
+            WaitForPreviousInstance();
+
+            // Try to create a named mutex - this will fail if another instance exists
+            singleInstanceMutex = new Mutex(true, "SegraApplicationMutex", out bool createdNew);
+
+            if (!createdNew)
+            {
+                // Another instance exists, send a message to it via named pipe
+                try
+                {
+                    using (var pipeClient = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
+                    {
+                        pipeClient.Connect(3000);
+
+                        using (var writer = new StreamWriter(pipeClient))
+                        {
+                            writer.WriteLine("SHOW_WINDOW");
+                            writer.Flush();
+                        }
+                    }
+
+                    Environment.Exit(0);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to communicate with existing instance: {ex.Message}");
+                }
+            }
+
+            StartNamedPipeServer();
+
+            var logDirectory = Path.GetDirectoryName(LogFilePath);
+            if (logDirectory != null && !Directory.Exists(logDirectory))
+            {
+                Directory.CreateDirectory(logDirectory);
+            }
+
+            ConfigureLogging();
+
+            VelopackApp.Build()
+                .OnBeforeUpdateFastCallback((v) =>
+                {
+                    if (UpdateService.UpdateManager == null)
+                    {
+                        Log.Error("UpdateManager is null");
+                        return;
+                    }
+                    var currentVersion = UpdateService.UpdateManager.CurrentVersion;
+                    if (currentVersion == null)
+                    {
+                        Log.Error("Current version is null");
+                        return;
+                    }
+                    Log.Information($"Updating from version {currentVersion} to {v}");
+                    File.WriteAllText(Path.Combine(Path.GetTempPath(), "segra.tmp"), currentVersion.ToString());
+                })
+                .OnAfterUpdateFastCallback((v) =>
+                {
+                    string previousVersionPath = Path.Combine(Path.GetTempPath(), "segra.tmp");
+                    if (File.Exists(previousVersionPath))
+                    {
+                        string previousVersion = File.ReadAllText(previousVersionPath);
+                        Log.Information($"Updated from version {previousVersion} to {v}");
+                        Task.Run(async () =>
+                        {
+                            await Task.Delay(5000);
+                            _ = MessageService.SendFrontendMessage("ShowReleaseNotes", previousVersion);
+                        });
+                        File.Delete(previousVersionPath);
+                    }
+                })
+                .OnFirstRun((v) =>
+                {
+                    Log.Information($"First run of Segra {v}");
+                })
+                .Run();
+
+            try
+            {
+                Log.Information("Application starting up...");
+
+#if WINDOWS
+                WebView2RuntimeService.LogRuntimeVersion();
+#endif
+
+                // VS Code sets SEGRA_VSCODE=1 via launch.json; Visual Studio does not.
+                // In VS Code the Vite dev server runs separately, so the frontend server is not needed.
+                // A child process (self-restart) inherits the variable without the debugger, so require both.
+                bool IsDebugMode = Debugger.IsAttached;
+                bool IsVSCodeDebug = IsDebugMode && Environment.GetEnvironmentVariable("SEGRA_VSCODE") == "1";
+
+                Task<string> frontendServer = IsVSCodeDebug ? Task.FromResult(string.Empty) : Task.Run(FrontendServer.Start);
+
+                // Version-stamped URL: WebKitGTK's disk cache persists across app updates and the
+                // static server sends no cache headers, so a bare /index.html can keep rendering
+                // the previous build's frontend until a manual refresh.
+                string? appVersion = Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+                if (IsDebugMode)
+                {
+                    Task.Run(() =>
+                    {
+                        var startInfo = new ProcessStartInfo
+                        {
+#if WINDOWS
+                            FileName = "cmd.exe",
+                            Arguments = "/c npm run dev",
+#else
+                            FileName = "npm",
+                            Arguments = "run dev",
+#endif
+                            WorkingDirectory = Path.Join(GetSolutionPath(), @"Frontend")
+                        };
+
+                        using (HttpClient client = new())
+                        {
+                            client.DefaultRequestHeaders.ExpectContinue = false;
+                            try
+                            {
+                                // Set a short timeout since we're just checking if the server is running
+                                client.Timeout = TimeSpan.FromSeconds(1);
+                                var response = client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "http://localhost:2882/index.html")).Result;
+                            }
+                            catch (Exception)
+                            {
+                                Process.Start(startInfo);
+                            }
+                        }
+                    });
+                }
+
+                Task.Run(() =>
+                {
+                    ContentServer.StartServer(ContentServer.Prefix);
+                });
+
+                IsFirstRun = !SettingsService.LoadSettings();
+                hasLoadedInitialSettings = true;
+
+                // Runs alongside the window and webview startup instead of delaying them
+                Task stateInit = Task.Run(() =>
+                {
+                    try
+                    {
+                        AppState.Instance.GpuVendor = GeneralUtils.DetectGpuVendor();
+                        AppState.Instance.Initialize();
+                        SettingsService.SaveSettings();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Failed to initialize app state");
+                    }
+                });
+                if (IsFirstRun)
+                {
+                    // Default device selection needs the enumerated devices
+                    stateInit.Wait();
+                    _ = SettingsService.LoadContentFromFolderIntoState(true);
+                    PlatformServices.Startup.SetStartupStatus(true);
+                    SettingsService.SelectDefaultDevices();
+                    _ = PresetsService.ApplyVideoPreset("high");
+                    _ = PresetsService.ApplyClipPreset("standard");
+                }
+
+                // Ensure content folder exists
+                if (!Directory.Exists(Settings.Instance.ContentFolder))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(Settings.Instance.ContentFolder);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Saved folder is unreachable (e.g. a drive that's no longer mounted);
+                        // fall back to the default so the app can still start.
+                        Log.Error(ex, $"Content folder '{Settings.Instance.ContentFolder}' is not accessible, falling back to default");
+                        var unreachableFolder = Settings.Instance.ContentFolder;
+                        Settings.Instance.ContentFolder = Settings.DefaultContentFolder();
+                        Directory.CreateDirectory(Settings.Instance.ContentFolder);
+                        SettingsService.SaveSettings();
+                        _ = Task.Run(() => MessageService.ShowModal(
+                            "Recording folder unavailable",
+                            $"The recording folder '{unreachableFolder}' could not be accessed. Segra will use '{Settings.Instance.ContentFolder}' instead. You can change it in Settings.",
+                            "warning"));
+                    }
+                }
+
+                if (!Directory.Exists(Settings.Instance.CacheFolder))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(Settings.Instance.CacheFolder);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, $"Cache folder '{Settings.Instance.CacheFolder}' is not accessible, falling back to default");
+                        var unreachableCacheFolder = Settings.Instance.CacheFolder;
+                        Settings.Instance.CacheFolder = Shared.PathUtils.Normalize(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra"));
+                        Directory.CreateDirectory(Settings.Instance.CacheFolder);
+                        SettingsService.SaveSettings();
+                        _ = Task.Run(() => MessageService.ShowModal(
+                            "Cache folder unavailable",
+                            $"The cache folder '{unreachableCacheFolder}' could not be accessed. Segra will use '{Settings.Instance.CacheFolder}' instead. You can change it in Settings.",
+                            "warning"));
+                    }
+                }
+
+                // Run data migrations
+                Task.Run(MigrationService.RunMigrations);
+
+                // Start WebSocket and Load Settings
+                Task.Run(MessageService.StartWebsocket);
+#if WINDOWS
+                // Native in-app audio playback (Windows only; makes Discord/OBS app-audio
+                // capture of the Segra window work). The frontend falls back to webview-rendered
+                // audio when this endpoint is absent (e.g. on Linux).
+                Task.Run(AudioStreamServer.StartAsync);
+#endif
+                Task.Run(StorageService.EnsureStorageBelowLimit);
+
+                // Check for updates
+                Task.Run(() => UpdateService.UpdateAppIfNecessary(forceCheck: true));
+
+                // Minimize to tray when relaunched after an automatic update, or when launched from
+                // startup with the Minimized startup window mode; otherwise open normally.
+                bool startMinimized = Environment.GetCommandLineArgs().Contains(UpdateService.RestartMinimizedArg)
+                    || (IsLaunchedFromStartup() && Settings.Instance.StartupWindowMode == StartupWindowMode.Minimized);
+                Log.Information($"Starting application{(startMinimized ? " minimized" : "")}");
+
+                // Tray icon (WinForms NotifyIcon on Windows; no-op on Linux)
+                PlatformServices.Tray.Initialize(
+                    onOpen: () => _ = ShowApplicationWindow(),
+                    onResetWindowSize: ResetWindowSize,
+                    onExit: () => { Shutdown(); Environment.Exit(0); },
+                    isWindowOpen: () => Window != null && Window.WindowState != PhotinoWindowState.Minimized);
+
+#if WINDOWS
+                // Start monitoring system power state changes (sleep/wake)
+                Task.Run(PowerModeMonitor.StartMonitoring);
+
+                // Run the OBS Initializer in a separate thread and application to make sure someting on the main thread doesn't block
+                // (HotkeyCaptureService.Start() is called from OBSService.InitializeAsync once OBS is
+                // ready, since hotkeys register through OBS's own hotkey system.)
+                // OBSWindow hosts the Win32 message pump the graphics-hook game_capture needs.
+                // Waits for the state init: OBS init ends by starting the always-on replay buffer,
+                // which needs the enumerated devices and displays.
+                stateInit.ContinueWith(_ => Application.Run(new OBSWindow()), TaskScheduler.Default);
+#else
+                // Linux libobs runs headless (no message pump needed); initialize OBS directly.
+                stateInit.ContinueWith(_ => OBSService.InitializeAsync(), TaskScheduler.Default);
+#endif
+
+                appUrl = IsDebugMode ? "http://localhost:2882" : $"{frontendServer.Result}/index.html?v={Uri.EscapeDataString(appVersion ?? "0")}";
+                Log.Information("Serving React app at {AppUrl}", appUrl);
+
+                // The message loop outlives every window, so closing to tray can destroy the
+                // webview (and its ~275MB of processes) instead of just hiding it.
+                App = new PhotinoApplication
+                {
+                    NotificationsEnabled = false, // Notifications disabled due to it creating a second start menu entry with incorrect start path. See https://github.com/tryphotino/photino.NET/issues/85
+                    ShutdownMode = PhotinoShutdownMode.OnExplicitShutdown
+                };
+
+                if (!startMinimized)
+                {
+                    App.Startup += (sender, eventArgs) => CreateWindow();
+                }
+
+                // ShowWindowEvent is signalled from the single-instance pipe thread.
+                var showWindowThread = new Thread(() =>
+                {
+                    while (true)
+                    {
+                        ShowWindowEvent.WaitOne();
+                        Log.Information("Show window event triggered");
+                        _ = ShowApplicationWindow();
+                    }
+                })
+                { IsBackground = true, Name = "ShowWindowSignal" };
+                showWindowThread.Start();
+
+                App.Run(null);
+            }
+            catch (Exception ex)
+            {
+                Log.Fatal(ex, "Application terminated unexpectedly.");
+            }
+            finally
+            {
+                Shutdown();
+            }
+        }
+
+        public static void ConfigureLogging()
+        {
+            PurgeOldLogs();
+
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .WriteTo.Debug()
+                //.WriteTo.Debug(restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning) // Remove restricted minimum level to show all logs but increase lag while debugging
+                .WriteTo.Sink(new TrimmingFileSink(LogFilePath, maxFileSizeBytes, trimTargetBytes, LogOutputTemplate))
+                .CreateLogger();
+        }
+
+        private static Size? _windowSizeBeforeFullscreen;
+        private static Point? _windowLocationBeforeFullscreen;
+        private static bool _wasMaximizedBeforeFullscreen;
+        private static Point? _lastNormalLocation;
+        private static Size? _lastNormalSize;
+        private static CancellationTokenSource? _windowStateSaveDebounceCts;
+        private const int WindowStateSaveDebounceMs = 5000;
+
+        public static void SetFullscreen(bool enabled)
+        {
+            try
+            {
+                if (Window == null) return;
+
+                if (enabled)
+                {
+                    _wasMaximizedBeforeFullscreen = Window.WindowState == PhotinoWindowState.Maximized;
+                    _windowSizeBeforeFullscreen = Window.Size;
+                    _windowLocationBeforeFullscreen = Window.Location;
+                    Window.SetMaximized(true);
+                }
+                else
+                {
+                    if (_wasMaximizedBeforeFullscreen)
+                    {
+                        return;
+                    }
+                    else if (_windowSizeBeforeFullscreen.HasValue && _windowLocationBeforeFullscreen.HasValue)
+                    {
+                        // Was not maximized, restore size and position
+                        Window.SetMaximized(false);
+                        Window.SetSize(_windowSizeBeforeFullscreen.Value);
+                        Window.SetLocation(_windowLocationBeforeFullscreen.Value);
+                    }
+                    else
+                    {
+                        Window.SetMaximized(false);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error setting fullscreen state");
+            }
+        }
+
+        public const string AwaitPidArg = "--await-pid";
+        private const int RestartShutdownWaitMs = 10000;
+        private static int _restarting;
+
+        // A restarted instance waits for its predecessor to exit instead of handing off to it through the pipe.
+        private static void WaitForPreviousInstance()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            int index = Array.IndexOf(args, AwaitPidArg);
+            if (index < 0 || index + 1 >= args.Length || !int.TryParse(args[index + 1], out int pid))
+                return;
+
+            try
+            {
+                using var previous = Process.GetProcessById(pid);
+                if (!previous.WaitForExit(RestartShutdownWaitMs + 5000))
+                {
+                    // It already decided to exit; finish the job so this instance can take over.
+                    previous.Kill();
+                    previous.WaitForExit(5000);
+                }
+            }
+            catch (Exception)
+            {
+                // Already gone.
+            }
+        }
+
+        // Relaunches Segra and exits. libobs may be wedged, so shutdown gets a bounded wait and the exit is unconditional.
+        public static void Restart(string reason, bool minimized)
+        {
+            if (Interlocked.Exchange(ref _restarting, 1) == 1)
+                return;
+
+            Log.Information($"Restarting Segra: {reason}");
+            if (!LaunchSuccessor(minimized))
+            {
+                Interlocked.Exchange(ref _restarting, 0);
+                return;
+            }
+
+            if (!Task.Run(Shutdown).Wait(RestartShutdownWaitMs))
+                Log.Warning($"Shutdown did not finish within {RestartShutdownWaitMs / 1000}s; exiting anyway");
+
+            Environment.Exit(0);
+        }
+
+        // For libobs's crash handler: the process is already dying on the crashing thread, so no shutdown and no libobs calls.
+        public static void ExitAfterCrash(string reason, bool minimized)
+        {
+            Log.Fatal($"Fatal recorder error, relaunching Segra: {reason}");
+            if (Interlocked.Exchange(ref _restarting, 1) == 0)
+                LaunchSuccessor(minimized);
+
+            Log.CloseAndFlush();
+            Process.GetCurrentProcess().Kill();
+        }
+
+        private static bool LaunchSuccessor(bool minimized)
+        {
+            string? exePath = Environment.ProcessPath;
+            if (exePath == null)
+            {
+                Log.Error("Cannot restart: process path is unknown");
+                return false;
+            }
+
+            try
+            {
+                var startInfo = new ProcessStartInfo(exePath)
+                {
+                    UseShellExecute = false,
+                    WorkingDirectory = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory
+                };
+                startInfo.ArgumentList.Add(AwaitPidArg);
+                startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+                if (minimized)
+                    startInfo.ArgumentList.Add(UpdateService.RestartMinimizedArg);
+
+                Process.Start(startInfo);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to launch the new Segra instance; staying up");
+                return false;
+            }
+        }
+
+        private static void Shutdown()
+        {
+            Log.Information("Application shutting down.");
+
+            // Cancel any pending debounced window-state save; the synchronous save below is final.
+            _windowStateSaveDebounceCts?.Cancel();
+
+            SaveWindowState();
+
+            // Stop any active recording first so OBS finalizes the file cleanly. Task.Run + block keeps
+            // the awaits off the tray thread, whose WinForms SynchronizationContext would otherwise deadlock.
+            // Skipped when the recorder is known to be dead: there is nothing to finalize and the stop may never return.
+            bool recorderLost = RecorderHealthService.IsRecorderLost;
+            if (!recorderLost && (AppState.Instance.Recording != null || AppState.Instance.PreRecording != null || AppState.Instance.IsFinishingRecording))
+            {
+                Log.Information("Active recording detected during shutdown; stopping it before exit.");
+                OBSService.TryStopRecording(TimeSpan.FromSeconds(15));
+            }
+
+            // Shutdown OBS if it was initialized
+            OBSService.TryShutdown(TimeSpan.FromSeconds(recorderLost ? 5 : 10));
+
+#if WINDOWS
+            HotkeyCaptureService.ShutdownBroker();
+#endif
+
+            Log.CloseAndFlush(); // Ensure all logs are written before the application exits
+
+            // Release the mutex when closing (only if we own it)
+            if (singleInstanceMutex != null)
+            {
+                try
+                {
+                    singleInstanceMutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                    // Mutex was not owned by this thread, which is fine
+                    // This can happen when exiting from the tray icon thread
+                }
+                finally
+                {
+                    singleInstanceMutex.Dispose();
+                }
+            }
+        }
+
+        private static void PurgeOldLogs()
+        {
+            try
+            {
+                var logDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+
+                if (!Directory.Exists(logDirectory))
+                    return;
+
+                var logFiles = Directory.GetFiles(logDirectory, "*.log");
+
+                if (logFiles.Length == 0)
+                    return;
+
+                var logFilePath = logFiles[0];
+                var fileInfo = new FileInfo(logFilePath);
+
+                if (!fileInfo.Exists || fileInfo.Length <= maxFileSizeBytes)
+                    return;
+
+                var lines = File.ReadAllLines(logFilePath).ToList();
+                var avgLineSize = fileInfo.Length / lines.Count;
+                var linesToKeep = (int)(trimTargetBytes / avgLineSize);
+
+                if (linesToKeep < lines.Count)
+                {
+                    var recentLines = lines.Skip(lines.Count - linesToKeep).ToList();
+                    File.WriteAllLines(logFilePath, recentLines);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error purging logs: {ex.Message}");
+            }
+        }
+
+        private static async Task BringWindowToForegroundAsync()
+        {
+            if (Window == null)
+                return;
+
+            Window.Invoke(() =>
+            {
+                Window.SetMinimized(false);
+            });
+            await Task.Delay(200);
+            Window.Invoke(() => Window.BringToFront());
+            FocusApplicationWindow();
+            Log.Information("Application window brought to foreground");
+        }
+
+        private static async Task ShowApplicationWindow()
+        {
+            Log.Information("Showing application window. Window is " + (Window == null ? "null" : "not null"));
+            if (Window == null)
+            {
+                if (App == null)
+                    return;
+
+                // Native windows must all be created on the thread that created the first one.
+                // InvokeAsync so the WinForms tray thread never blocks on the dispatcher.
+                await App.Dispatcher.InvokeAsync(CreateWindow);
+            }
+
+            await BringWindowToForegroundAsync();
+        }
+
+        public static void BringWindowToFront() => _ = ShowApplicationWindow();
+
+        // SetForegroundWindow only works for the process owning the foreground, so borrow its input queue.
+        private static void FocusApplicationWindow()
+        {
+#if WINDOWS
+            try
+            {
+                IntPtr hWnd = Process.GetCurrentProcess().MainWindowHandle;
+                if (hWnd == IntPtr.Zero)
+                    return;
+
+                IntPtr foreground = GetForegroundWindow();
+                if (foreground == hWnd)
+                    return;
+
+                ShowWindow(hWnd, SW_RESTORE);
+
+                uint foregroundThread = GetWindowThreadProcessId(foreground, IntPtr.Zero);
+                uint currentThread = GetCurrentThreadId();
+                bool attached = foregroundThread != 0 && foregroundThread != currentThread &&
+                    AttachThreadInput(currentThread, foregroundThread, true);
+
+                SetForegroundWindow(hWnd);
+
+                if (attached)
+                    AttachThreadInput(currentThread, foregroundThread, false);
+
+                Log.Information("Application window focused");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Could not focus the application window");
+            }
+#endif
+        }
+
+        private static Stopwatch _windowCreateStopwatch = new();
+
+        private static void CreateWindow()
+        {
+            Log.Information("Loading frontend, app url is " + appUrl);
+
+#if WINDOWS
+            string iconFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+#else
+            string iconFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.png");
+#endif
+            var windowSize = GetDefaultWindowSize();
+
+            bool hasRestoredLocation = TryGetRestoredWindowLocation(out Point restoredLocation);
+
+            // Restore the last window size too (older saved states have no size; keep the default then).
+            var savedState = Settings.Instance.LastWindowState;
+            bool restoreMaximized = false;
+            if (hasRestoredLocation && savedState != null)
+            {
+                if (savedState.Width > 0 && savedState.Height > 0)
+                {
+                    windowSize = new Size(savedState.Width, savedState.Height);
+                }
+                restoreMaximized = savedState.Maximized;
+            }
+
+            _windowCreateStopwatch = Stopwatch.StartNew();
+            var windowBuilder = new PhotinoWindow();
+#if WINDOWS
+            // Chromium/WebView2-only flags; WebKitGTK on Linux parses these natively and crashes on the
+            // leading "--", so they must only be set on Windows.
+            string browserArgs = "--enable-blink-features=AudioVideoTracks";
+
+            // Without this, Chromium runs system proxy auto-detection (WPAD) on launch and the
+            // webview's first request to the local server stalls ~1s waiting for it. Only skip
+            // proxy support when the user has no proxy configured, since the frontend also
+            // calls segra.tv directly.
+            if (!HasUserConfiguredProxy())
+            {
+                browserArgs += " --no-proxy-server";
+            }
+            windowBuilder = windowBuilder.SetBrowserControlInitParameters(browserArgs);
+
+            // PhotinoX defaults the WebView2 profile to %LOCALAPPDATA%\PhotinoX; keep using the
+            // Photino.NET path so existing logins and localStorage survive the upgrade.
+            windowBuilder = windowBuilder.SetUserDataFolder(
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Photino"));
+#endif
+            windowBuilder = windowBuilder
+                .SetUseOsDefaultSize(false)
+                .SetIconFile(iconFile)
+                .SetSize(windowSize)
+                .SetResizable(true);
+
+            // Restore the window to the monitor it was last on instead of always centering on the primary display.
+            // UseOsDefaultLocation defaults to true, so it must be explicitly disabled or the native window
+            // ignores SetLocation and falls back to the OS default position (same reasoning as SetUseOsDefaultSize above).
+            windowBuilder = hasRestoredLocation
+                ? windowBuilder.SetUseOsDefaultLocation(false).SetLocation(restoredLocation)
+                : windowBuilder.Center();
+
+            // The window maximizes on the monitor containing the restored location.
+            if (restoreMaximized)
+            {
+                windowBuilder = windowBuilder.SetMaximized(true);
+            }
+
+            Window = windowBuilder
+                .RegisterWebMessageReceivedHandler((sender, args) =>
+                {
+                    Window = (PhotinoWindow)sender!;
+                    // Web messages arrive on the UI thread; keep handlers off it so a blocking call can't freeze the window.
+                    _ = Task.Run(() => MessageService.HandleMessage(args.Message));
+                })
+                .Load(appUrl!);
+
+            Log.Information("Window variable has been set");
+
+            Window.SetTitle("Segra");
+
+            // Track the last normal (not maximized/minimized) bounds so SaveWindowState can persist
+            // a sensible restore size even when the window is closed while maximized. The move/size
+            // events also debounce-persist the window state so a crash or force-kill doesn't lose
+            // the latest position/size.
+            Window.RegisterLocationChangedHandler((sender, e) =>
+            {
+                if (Window != null && Window.WindowState != PhotinoWindowState.Maximized &&
+                    Window.WindowState != PhotinoWindowState.Minimized)
+                {
+                    _lastNormalLocation = e.Location;
+                    ScheduleWindowStateSave();
+                }
+            });
+            Window.RegisterSizeChangedHandler((sender, e) =>
+            {
+                if (Window != null && Window.WindowState != PhotinoWindowState.Maximized &&
+                    Window.WindowState != PhotinoWindowState.Minimized)
+                {
+                    _lastNormalSize = e.Size;
+                    ScheduleWindowStateSave();
+                }
+            });
+
+            // Maximizing doesn't pass the normal-bounds guard above (the window is already
+            // maximized when the size event fires), so schedule a save from the state events to
+            // persist Maximized=true. Restored is registered too for symmetry (e.g. restore-from-minimize).
+            Window.RegisterMaximizedHandler((sender, eventArgs) => ScheduleWindowStateSave());
+            Window.RegisterRestoredHandler((sender, eventArgs) => ScheduleWindowStateSave());
+
+            Window.RegisterClosingHandler((sender, e) =>
+            {
+                if (Settings.Instance.CloseButtonAction == CloseButtonAction.Exit)
+                {
+                    e.Cancel = true;
+                    Shutdown();
+                    Environment.Exit(0);
+                    return;
+                }
+
+                SaveWindowState();
+                Window = null;
+                Log.Information("Application window closing to tray");
+            });
+
+            Window.Show();
+            Log.Information("Window shown in {Elapsed}ms", _windowCreateStopwatch.ElapsedMilliseconds);
+        }
+
+        private static Size GetDefaultWindowSize()
+        {
+#if WINDOWS
+            // Photino sizes windows in physical pixels, so scale the default size by the
+            // OS display scale (e.g. 150% on 4K monitors) and clamp it to the usable screen area
+            double displayScale = GetDpiForSystem() / 96.0;
+            return new Size(
+                Math.Min((int)(1280 * displayScale), GetSystemMetrics(SM_CXFULLSCREEN)),
+                Math.Min((int)(720 * displayScale), GetSystemMetrics(SM_CYFULLSCREEN)));
+#else
+            // WebKitGTK handles DPI scaling itself; use a sensible default size.
+            return new Size(1280, 720);
+#endif
+        }
+
+        // Returns the window to its default size while keeping its position. Triggered from the tray menu.
+        public static void ResetWindowSize()
+        {
+            // Task.Run keeps the work off the tray thread (see Shutdown for the reasoning).
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (Window == null)
+                    {
+                        // No window to resize; drop the saved size (keeping the position) so the
+                        // next launch uses the default.
+                        var saved = Settings.Instance.LastWindowState;
+                        if (saved != null)
+                        {
+                            Settings.Instance.LastWindowState = new WindowState { X = saved.X, Y = saved.Y };
+                            SettingsService.SaveSettings();
+                        }
+                        return;
+                    }
+
+                    // Show the window first so the resize is visible and not applied while minimized.
+                    await ShowApplicationWindow();
+                    Window.Invoke(() =>
+                    {
+                        Window.SetMaximized(false);
+                        Window.SetSize(GetDefaultWindowSize());
+                    });
+
+                    Log.Information("Window size reset to default");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Error resetting window size");
+                }
+            });
+        }
+
+        // Validates the saved location still lands on a currently connected monitor
+        // (e.g. the second monitor wasn't unplugged), falling back to centering otherwise.
+        private static bool TryGetRestoredWindowLocation(out Point location)
+        {
+            var saved = Settings.Instance.LastWindowState;
+            if (saved != null)
+            {
+                var savedLocation = new Point(saved.X, saved.Y);
+#if WINDOWS
+                // Only restore if the saved location still lands on a connected monitor.
+                if (Screen.AllScreens.Any(screen => screen.Bounds.Contains(savedLocation)))
+                {
+                    location = savedLocation;
+                    return true;
+                }
+#else
+                // No cross-platform multi-monitor bounds query; trust the saved location.
+                location = savedLocation;
+                return true;
+#endif
+            }
+
+            location = default;
+            return false;
+        }
+
+        // Persists the window bounds shortly after the user stops moving or resizing it.
+        // Photino fires the location/size handlers continuously while dragging, so the write is
+        // debounced (each new event resets the timer) and only runs after the drag settles.
+        private static void ScheduleWindowStateSave()
+        {
+            try
+            {
+                _windowStateSaveDebounceCts?.Cancel();
+                var cts = new CancellationTokenSource();
+                _windowStateSaveDebounceCts = cts;
+
+                _ = Task.Delay(WindowStateSaveDebounceMs, cts.Token).ContinueWith(_ =>
+                {
+                    if (!cts.Token.IsCancellationRequested && Window != null)
+                    {
+                        SaveWindowState();
+                    }
+                }, CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error scheduling window state save");
+            }
+        }
+
+        private static void SaveWindowState()
+        {
+            if (Window == null || Window.WindowState == PhotinoWindowState.Minimized) return;
+
+            try
+            {
+                bool maximized = Window.WindowState == PhotinoWindowState.Maximized;
+                Point location = Window.Location;
+                Size size = Window.Size;
+
+                // A maximized window reports its maximized bounds, so persist the last
+                // tracked normal bounds (or the previously saved ones) instead.
+                if (maximized)
+                {
+                    var previous = Settings.Instance.LastWindowState;
+                    location = _lastNormalLocation
+                        ?? (previous != null ? new Point(previous.X, previous.Y) : location);
+                    size = _lastNormalSize
+                        ?? (previous is { Width: > 0, Height: > 0 } ? new Size(previous.Width, previous.Height) : size);
+                }
+
+                var windowState = new WindowState
+                {
+                    X = location.X,
+                    Y = location.Y,
+                    Width = size.Width,
+                    Height = size.Height,
+                    Maximized = maximized
+                };
+
+                // Skip the disk write when nothing changed (e.g. a debounced save racing the
+                // close/exit handler, which already persisted the same bounds).
+                if (Settings.Instance.LastWindowState?.Equals(windowState) == true)
+                {
+                    return;
+                }
+
+                Settings.Instance.LastWindowState = windowState;
+
+                // Window-state saves run frequently (debounced on move/resize/maximize), so
+                // suppress the "Settings saved" log line for them.
+                SettingsService.SaveSettings(suppressLog: true);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error saving window state");
+            }
+        }
+
+        private static void StartNamedPipeServer()
+        {
+            pipeServerThread = new Thread(() =>
+            {
+                while (true)
+                {
+                    try
+                    {
+                        using (var pipeServer = new NamedPipeServerStream(PipeName, PipeDirection.In))
+                        {
+                            pipeServer.WaitForConnection();
+
+                            using (var reader = new StreamReader(pipeServer))
+                            {
+                                string? message = reader.ReadLine();
+                                if (message == "SHOW_WINDOW")
+                                {
+                                    if (Window != null)
+                                    {
+                                        Window.Invoke(() =>
+                                        {
+                                            Window.SetMinimized(false);
+                                        });
+                                        Thread.Sleep(200);
+                                        Window.Invoke(() => Window.BringToFront());
+                                        Log.Information("Window brought to foreground directly from pipe server");
+                                    }
+                                    else
+                                    {
+                                        // Only signal the main thread to create the window if it doesn't exist
+                                        ShowWindowEvent.Set();
+                                        Log.Information("ShowWindowEvent set");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (Log.Logger != null)
+                        {
+                            Log.Error(ex, "Error in named pipe server");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Error in named pipe server: {ex.Message}");
+                        }
+
+                        Thread.Sleep(1000);
+                    }
+                }
+            });
+
+            pipeServerThread.IsBackground = true;
+            pipeServerThread.Start();
+        }
+
+#if WINDOWS
+        // True when the user has an explicit proxy or PAC script configured in Windows.
+        private static bool HasUserConfiguredProxy()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Internet Settings");
+                if (key == null) return false;
+
+                bool proxyEnabled = key.GetValue("ProxyEnable") is int enabled && enabled != 0;
+                bool hasPacUrl = !string.IsNullOrEmpty(key.GetValue("AutoConfigURL") as string);
+                return proxyEnabled || hasPacUrl;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+#endif
+
+        // Check if the application was launched from startup
+        private static bool IsLaunchedFromStartup()
+        {
+            return Environment.GetCommandLineArgs().Contains("--from-startup");
+        }
+
+        private static string GetSolutionPath()
+        {
+            string currentDirectory = Directory.GetCurrentDirectory();
+
+            string directory = currentDirectory;
+            while (!string.IsNullOrEmpty(directory) && !Directory.GetFiles(directory, "*.sln").Any())
+            {
+                directory = Directory.GetParent(directory)?.FullName!;
+            }
+
+            if (string.IsNullOrEmpty(directory))
+            {
+                throw new InvalidOperationException("Solution path could not be found. Ensure you are running this application within a solution directory.");
+            }
+
+            return directory;
+        }
+    }
+}

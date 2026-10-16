@@ -1,0 +1,228 @@
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { FileText, RefreshCw, Plane, BookOpen } from 'lucide-react';
+import { GithubIcon, DiscordIcon } from '../icons/BrandIcons';
+import DropdownSelect from '../DropdownSelect';
+import { Settings as SettingsType } from '../../Models/types';
+import { sendMessageToBackend } from '../../Utils/MessageUtils';
+import Button from '../Button';
+import { useAppState } from '../../Context/AppStateContext';
+
+interface AdvancedSectionProps {
+  settings: SettingsType;
+  updateSettings: (updates: Partial<SettingsType>) => void;
+  openReleaseNotesModal: (version: string | null) => void;
+  checkForUpdates: () => void;
+  // False on Linux (Flatpak): show update guidance instead of the in-app updater controls.
+  canSelfUpdate: boolean;
+}
+
+export default function AdvancedSection({
+  settings,
+  updateSettings,
+  openReleaseNotesModal,
+  checkForUpdates,
+  canSelfUpdate,
+}: AdvancedSectionProps) {
+  const appState = useAppState();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const [flyDistance, setFlyDistance] = useState(240);
+
+  // Fly the plane from its spot to the right edge of the Airplane Mode row.
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const measure = () => {
+      const content = contentRef.current;
+      if (!content) return;
+      const distance = row.getBoundingClientRect().right - content.getBoundingClientRect().right;
+      if (distance > 0) setFlyDistance(distance);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <>
+      <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
+        <h2 className="text-xl font-semibold mb-4">Updates</h2>
+        {!canSelfUpdate && (
+          <p className="text-sm opacity-70 mb-4">
+            Segra updates automatically through Flatpak. To update now, run{' '}
+            <code className="px-1 py-0.5 rounded bg-base-200">flatpak update tv.segra.Segra</code>{' '}
+            or use your software center.
+          </p>
+        )}
+        {/* OBS Version is hidden when the recorder is fixed for this install (bundled or already downloaded) */}
+        {(canSelfUpdate || appState.availableOBSVersions.length > 0) && (
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            {canSelfUpdate && (
+              <div className="form-control">
+                <label className="label">
+                  <span className="label-text text-base-content">Update Channel</span>
+                </label>
+                <DropdownSelect
+                  items={[
+                    { value: 'stable', label: 'Stable' },
+                    { value: 'beta', label: 'Beta' },
+                  ]}
+                  value={settings.receiveBetaUpdates ? 'beta' : 'stable'}
+                  onChange={(val) => updateSettings({ receiveBetaUpdates: val === 'beta' })}
+                />
+              </div>
+            )}
+            {appState.availableOBSVersions.length > 0 && (
+              <div className="form-control">
+                <label className="label">
+                  <span className="label-text text-base-content">OBS Version</span>
+                </label>
+                <DropdownSelect
+                  items={[
+                    { value: '', label: 'Automatic' },
+                    ...[...appState.availableOBSVersions]
+                      .sort((a, b) => {
+                        return b.version.localeCompare(a.version, undefined, { numeric: true });
+                      })
+                      .map((v) => ({
+                        value: v.version,
+                        label: `${v.version}${v.isBeta ? ' (Beta)' : ''}`,
+                      })),
+                  ]}
+                  value={settings.selectedOBSVersion || ''}
+                  onChange={(val) => updateSettings({ selectedOBSVersion: val || null })}
+                />
+              </div>
+            )}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {canSelfUpdate && (
+            <Button
+              variant="primary"
+              size="sm"
+              className="gap-2 bg-base-200 hover:bg-base-300"
+              onClick={() => checkForUpdates()}
+              loading={appState.isCheckingForUpdates}
+            >
+              {!appState.isCheckingForUpdates && <RefreshCw size={16} className="shrink-0" />}
+              <span className="inline-block">Check for Updates</span>
+            </Button>
+          )}
+          <Button
+            variant="primary"
+            size="sm"
+            className="gap-2 bg-base-200 hover:bg-base-300"
+            onClick={() => openReleaseNotesModal(null)}
+          >
+            <GithubIcon size={16} aria-hidden="true" />
+            <span className="inline-block">View Release Notes</span>
+          </Button>
+        </div>
+        {canSelfUpdate && (
+          <label className="flex items-center gap-3 cursor-pointer p-3 bg-base-200 rounded-lg border border-base-400 mt-4">
+            <input
+              type="checkbox"
+              name="autoInstallUpdates"
+              checked={settings.autoInstallUpdates}
+              onChange={(e) => updateSettings({ autoInstallUpdates: e.target.checked })}
+              className="checkbox checkbox-primary checkbox-sm"
+            />
+            <div>
+              <div className="font-semibold">Install Updates Automatically</div>
+              <div className="text-sm opacity-70 mt-0.5">
+                Installs when nothing is recording and the window is closed.
+              </div>
+            </div>
+          </label>
+        )}
+      </div>
+
+      <div className="p-4 bg-base-300 rounded-lg shadow-md border border-base-400">
+        <h2 className="text-xl font-semibold mb-4">Online Features</h2>
+        <div ref={rowRef}>
+          <label className="flex items-center gap-3 cursor-pointer p-3 bg-base-200 rounded-lg border border-base-400 overflow-hidden">
+            <input
+              type="checkbox"
+              name="airplaneMode"
+              checked={settings.airplaneMode}
+              onChange={(e) => updateSettings({ airplaneMode: e.target.checked })}
+              className="checkbox checkbox-primary checkbox-sm"
+            />
+            <div>
+              <span ref={contentRef} className="inline-flex items-center gap-1.5 font-semibold">
+                Airplane Mode
+                <AnimatePresence initial={false}>
+                  {settings.airplaneMode && (
+                    <motion.span
+                      className="inline-flex"
+                      initial={{ opacity: 0, x: -8, rotate: 45 }}
+                      animate={{ opacity: 1, x: 0, rotate: 45 }}
+                      exit={{
+                        opacity: 0,
+                        x: flyDistance,
+                        rotate: 45,
+                        transition: {
+                          x: { duration: 1.9, ease: [0.2, 0, 0.8, 0] },
+                          opacity: { duration: 0.9, ease: 'easeIn', delay: 1.0 },
+                        },
+                      }}
+                      transition={{ duration: 0.35, ease: 'easeOut' }}
+                    >
+                      <Plane size={16} />
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </span>
+              <div className="text-sm opacity-70 mt-0.5">
+                Signs you out and hides uploading and sharing.
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* Version */}
+      <div className="text-center mt-4 text-sm text-base-content/60">
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() =>
+                sendMessageToBackend('OpenInBrowser', { Url: 'https://docs.segra.tv' })
+              }
+            >
+              <BookOpen className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span className="leading-none">Docs</span>
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() =>
+                sendMessageToBackend('OpenInBrowser', { Url: 'https://discord.gg/6JbPTS9weF' })
+              }
+            >
+              <DiscordIcon size={16} className="shrink-0" aria-hidden="true" />
+              <span className="leading-none">Discord</span>
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => sendMessageToBackend('OpenLogsLocation')}
+            >
+              <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span className="leading-none">Logs</span>
+            </Button>
+          </div>
+          <div>
+            Segra{' '}
+            {__APP_VERSION__ === 'Developer Preview' ? __APP_VERSION__ : 'v' + __APP_VERSION__}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

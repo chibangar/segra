@@ -1,0 +1,547 @@
+using Serilog;
+using System.Text.Json;
+using Segra.Backend.App;
+using Segra.Backend.Core;
+using Segra.Backend.Core.Models;
+using Segra.Backend.Media;
+using System.Collections.Concurrent;
+using System.Net;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+
+namespace Segra.Backend.Games
+{
+    public static class GameUtils
+    {
+        private static HashSet<string> _gameExePaths = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, GameEntry> _exeToEntry = new(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<int, GameEntry> _steamIdToEntry = new();
+        private static List<GameEntry> _gamesList = [];
+        private static List<GameEntry>? _cachedGameList;
+        private static BlacklistEntry _blacklist = new();
+        private static readonly ConcurrentDictionary<string, Regex> _wildcardRegexCache = new();
+        private static bool _isInitialized = false;
+
+        public static async Task InitializeAsync()
+        {
+            if (_isInitialized) return;
+
+            await DownloadGamesJsonIfNeededAsync();
+            LoadGamesFromJson();
+            await DownloadBlacklistJsonIfNeededAsync();
+            LoadBlacklistFromJson();
+            _isInitialized = true;
+        }
+
+        public static bool MatchesExePattern(string exePath, string pattern)
+        {
+            if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(pattern))
+                return false;
+
+            string normalizedPath = exePath.Replace("\\", "/");
+            string fileName = Path.GetFileName(exePath);
+            string normalizedPattern = pattern.Replace("\\", "/");
+            return MatchesGamePattern(normalizedPath, fileName, normalizedPattern);
+        }
+
+        public static bool IsGameExePath(string exePath)
+        {
+            if (!_isInitialized || string.IsNullOrEmpty(exePath))
+                return false;
+
+            string normalizedPath = exePath.Replace("\\", "/");
+            string fileName = Path.GetFileName(exePath);
+
+            foreach (var gamePath in _gameExePaths)
+            {
+                if (MatchesGamePattern(normalizedPath, fileName, gamePath))
+                    return true;
+            }
+
+            return false;
+        }
+
+        // Exe pattern match first, then Steam app id (install-folder granularity, as a fallback).
+        public static GameEntry? ResolveEntryFromExePath(string exePath)
+        {
+            if (!_isInitialized || string.IsNullOrEmpty(exePath))
+                return null;
+
+            string normalizedPath = exePath.Replace("\\", "/");
+            string fileName = Path.GetFileName(exePath);
+
+            foreach (var entry in _exeToEntry)
+            {
+                if (MatchesGamePattern(normalizedPath, fileName, entry.Key))
+                    return entry.Value;
+            }
+
+            if (SteamUtils.GetAppInfoFromExePath(exePath)?.AppId is int appId
+                && _steamIdToEntry.TryGetValue(appId, out var steamEntry)
+                && steamEntry.Executables.Count == 0)
+                return steamEntry;
+
+            return null;
+        }
+
+        public static string? GetGameNameFromExePath(string exePath) => ResolveEntryFromExePath(exePath)?.Name;
+
+        public static int? GetIgdbIdFromExePath(string exePath) => ResolveEntryFromExePath(exePath)?.Igdb?.Id;
+
+        public static string? GetIconFromExePath(string exePath) => ResolveEntryFromExePath(exePath)?.Icon;
+
+        // Numeric app ids make the cover endpoint serve the Steam library hero
+        public static string? GetCoverImageIdFromExePath(string exePath)
+        {
+            var entry = ResolveEntryFromExePath(exePath);
+            if (entry?.SteamId is int steamId)
+                return steamId.ToString();
+            if (!string.IsNullOrEmpty(entry?.Igdb?.CoverImageId))
+                return entry.Igdb.CoverImageId;
+
+            if (entry == null && _isInitialized && SteamUtils.GetAppInfoFromExePath(exePath)?.AppId is int appId)
+                return appId.ToString();
+
+            return null;
+        }
+
+        public static bool HasKnownGameExeInFolder(string gameFolderName, string basePath)
+        {
+            if (!_isInitialized) return false;
+
+            string folderPrefix = gameFolderName + "/";
+
+            foreach (var gamePath in _gameExePaths)
+            {
+                if (!gamePath.Contains('/')) continue;
+                if (!gamePath.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (gamePath.Contains('*'))
+                {
+                    string relativePath = gamePath.Substring(folderPrefix.Length).Replace("/", "\\");
+                    string subDir = Path.GetDirectoryName(relativePath) ?? "";
+                    string searchPattern = Path.GetFileName(relativePath);
+                    string directory = Path.Combine(basePath, gameFolderName, subDir);
+
+                    if (Directory.Exists(directory))
+                    {
+                        try
+                        {
+                            if (Directory.EnumerateFiles(directory, searchPattern).Any())
+                            {
+                                Log.Information($"Found known game executable matching wildcard pattern in folder: {directory}\\{searchPattern}");
+                                return true;
+                            }
+                        }
+                        catch (Exception) { }
+                    }
+                }
+                else
+                {
+                    string fullPath = Path.Combine(basePath, gamePath.Replace("/", "\\"));
+                    if (File.Exists(fullPath))
+                    {
+                        Log.Information($"Found known game executable on disk: {fullPath}");
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        public static string[] GetBlacklistedPathTexts() => _blacklist.PathTexts;
+
+        public static string[] GetBlacklistedWords() => _blacklist.DescriptionWords;
+
+        public static List<GameEntry> GetGameList()
+        {
+            return _cachedGameList ??= _gamesList.Select(game => new GameEntry
+            {
+                Name = game.Name,
+                Executables = game.Executables.Select(exe => exe.Replace("/", "\\")).ToList(),
+                Icon = game.Icon,
+                IgdbId = game.Igdb?.Id,
+                SteamId = game.SteamId
+            }).ToList();
+        }
+
+        // Keeps each per-game setting's display name and icon in sync with the games.json catalog.
+        // Games are matched by their stored IgdbId; entries without one are matched by name and have the
+        // id backfilled, so a future catalog rename is then tracked. Custom games (no match) are left as-is.
+        public static void ReconcileGameSettingsWithCatalog()
+        {
+            try
+            {
+                if (_gamesList.Count == 0 || Settings.Instance.Games.Count == 0) return;
+
+                bool changed = false;
+                foreach (var gameSetting in Settings.Instance.Games)
+                {
+                    GameEntry? entry = gameSetting.IgdbId.HasValue
+                        ? _gamesList.FirstOrDefault(e => e.Igdb?.Id == gameSetting.IgdbId.Value)
+                        : _gamesList.FirstOrDefault(e => string.Equals(e.Name, gameSetting.Name, StringComparison.OrdinalIgnoreCase));
+
+                    if (entry == null) continue;
+
+                    if (entry.Igdb?.Id is int id && gameSetting.IgdbId != id)
+                    {
+                        gameSetting.IgdbId = id;
+                        changed = true;
+                    }
+                    if (!string.Equals(gameSetting.Name, entry.Name, StringComparison.Ordinal))
+                    {
+                        gameSetting.Name = entry.Name;
+                        changed = true;
+                    }
+                    if (!string.Equals(gameSetting.Icon, entry.Icon, StringComparison.Ordinal))
+                    {
+                        gameSetting.Icon = entry.Icon;
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                {
+                    Log.Information("Reconciled per-game settings with the games.json catalog");
+                    SettingsService.SaveSettings();
+                    _ = MessageService.SendSettingsToFrontend("Reconciled game settings with catalog");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to reconcile game settings with catalog");
+            }
+        }
+
+        public static IReadOnlyDictionary<int, string> GetIgdbIdToNameMap()
+        {
+            var map = new Dictionary<int, string>();
+            foreach (var entry in _gamesList)
+            {
+                if (entry.Igdb?.Id is int id)
+                {
+                    map[id] = entry.Name;
+                }
+            }
+            return map;
+        }
+
+        private static Regex GetWildcardRegex(string pattern, bool anchorToFullString)
+        {
+            string cacheKey = (anchorToFullString ? "^" : "") + pattern;
+            return _wildcardRegexCache.GetOrAdd(cacheKey, _ =>
+            {
+                string regexPattern = Regex.Escape(pattern).Replace("\\*", ".*");
+                if (anchorToFullString)
+                    regexPattern = "^" + regexPattern + "$";
+                return new Regex(regexPattern, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            });
+        }
+
+        private static bool MatchesGamePattern(string normalizedPath, string fileName, string gamePattern)
+        {
+            bool isWildcard = gamePattern.Contains('*');
+
+            if (gamePattern.Contains('/'))
+            {
+                if (isWildcard)
+                    return GetWildcardRegex(gamePattern, false).IsMatch(normalizedPath);
+                return normalizedPath.Contains(gamePattern, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                if (isWildcard)
+                    return GetWildcardRegex(gamePattern, true).IsMatch(fileName);
+                return fileName.Equals(gamePattern, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private static void LoadGamesFromJson()
+        {
+            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+            string jsonPath = Path.Combine(appDataDir, "games.json");
+
+            if (!File.Exists(jsonPath))
+            {
+                Log.Warning("games.json file not found. Game detection from JSON will be disabled.");
+                return;
+            }
+
+            try
+            {
+                using (var stream = File.OpenRead(jsonPath))
+                {
+                    _gamesList = JsonSerializer.Deserialize<List<GameEntry>>(stream) ?? [];
+                }
+
+                _cachedGameList = null;
+                _gameExePaths.Clear();
+                _exeToEntry.Clear();
+                _steamIdToEntry.Clear();
+                _wildcardRegexCache.Clear();
+
+                foreach (var entry in _gamesList)
+                {
+                    if (entry.SteamId is int steamId)
+                    {
+                        _steamIdToEntry.TryAdd(steamId, entry);
+                    }
+
+                    foreach (var exe in entry.Executables)
+                    {
+                        string normalizedExe = exe.Replace("\\", "/");
+                        _gameExePaths.Add(normalizedExe);
+
+                        // When two entries share an exe pattern, keep the one with IGDB metadata.
+                        if (_exeToEntry.TryGetValue(normalizedExe, out var existing) && existing.Igdb != null && entry.Igdb == null)
+                            continue;
+                        _exeToEntry[normalizedExe] = entry;
+                    }
+                }
+
+                Log.Information($"Loaded {_gamesList.Count} games with {_gameExePaths.Count} executables and {_steamIdToEntry.Count} Steam ids from games.json");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error loading games.json");
+            }
+
+            // Keep per-game custom settings in sync with the (possibly updated) catalog.
+            ReconcileGameSettingsWithCatalog();
+
+            _ = MessageService.SendFrontendMessage("GameList", GetGameList());
+
+            _ = Task.Run(ContentService.SyncContentGameNamesByIgdb);
+        }
+
+        private static void AddUserAgent(HttpClient httpClient)
+        {
+            if (Settings.Instance.AirplaneMode)
+            {
+                httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd("Segra");
+                return;
+            }
+
+            string os = OperatingSystem.IsWindows() ? "Windows" : "Linux";
+            httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd($"Segra/{UpdateService.GetCurrentVersion()}");
+            httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd($"({os} {Environment.OSVersion.Version.ToString(3)})");
+        }
+
+        private static async Task DownloadBlacklistJsonIfNeededAsync()
+        {
+            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+            Directory.CreateDirectory(appDataDir);
+
+            string jsonPath = Path.Combine(appDataDir, "blacklist.json");
+            string cdnUrl = "https://cdn.segra.tv/games/blacklist.json";
+
+            using (var httpClient = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }))
+            {
+                httpClient.Timeout = TimeSpan.FromSeconds(60);
+                AddUserAgent(httpClient);
+
+                try
+                {
+                    var headRequest = new HttpRequestMessage(HttpMethod.Head, cdnUrl);
+                    using var headTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var headResponse = await httpClient.SendAsync(headRequest, headTimeout.Token);
+
+                    if (!headResponse.IsSuccessStatusCode)
+                    {
+                        Log.Error($"Failed to fetch metadata from {cdnUrl}. Status: {headResponse.StatusCode}");
+                        return;
+                    }
+
+                    DateTimeOffset? remoteLastModified = headResponse.Content.Headers.LastModified;
+
+                    bool shouldDownload = false;
+
+                    if (!File.Exists(jsonPath))
+                    {
+                        Log.Information("Local blacklist.json not found. Downloading...");
+                        shouldDownload = true;
+                    }
+                    else if (remoteLastModified == null)
+                    {
+                        Log.Warning("Last-Modified header not found. Downloading blacklist.json anyway.");
+                        shouldDownload = true;
+                    }
+                    else
+                    {
+                        var localLastModified = File.GetLastWriteTimeUtc(jsonPath);
+
+                        if (localLastModified >= remoteLastModified.Value.UtcDateTime)
+                        {
+                            Log.Information("Local blacklist.json is up to date. Skipping download.");
+                            return;
+                        }
+                        else
+                        {
+                            Log.Information("Remote blacklist.json is newer. Downloading new version.");
+                            shouldDownload = true;
+                        }
+                    }
+
+                    if (shouldDownload)
+                    {
+                        var jsonBytes = await httpClient.GetByteArrayAsync(cdnUrl);
+                        await File.WriteAllBytesAsync(jsonPath, jsonBytes);
+
+                        if (remoteLastModified != null)
+                        {
+                            File.SetLastWriteTimeUtc(jsonPath, remoteLastModified.Value.UtcDateTime);
+                        }
+
+                        Log.Information("Blacklist download complete");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Error downloading blacklist.json");
+                }
+            }
+        }
+
+        private static void LoadBlacklistFromJson()
+        {
+            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+            string jsonPath = Path.Combine(appDataDir, "blacklist.json");
+
+            if (!File.Exists(jsonPath))
+            {
+                Log.Warning("blacklist.json file not found.");
+                return;
+            }
+
+            try
+            {
+                string jsonContent = File.ReadAllText(jsonPath);
+                _blacklist = JsonSerializer.Deserialize<BlacklistEntry>(jsonContent) ?? new();
+
+                Log.Information($"Loaded blacklist with {_blacklist.PathTexts.Length} path texts and {_blacklist.DescriptionWords.Length} description words from blacklist.json");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error loading blacklist.json");
+            }
+        }
+
+        private static async Task DownloadGamesJsonIfNeededAsync()
+        {
+            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+            Directory.CreateDirectory(appDataDir);
+
+            string jsonPath = Path.Combine(appDataDir, "games.json");
+            string cdnUrl = "https://cdn.segra.tv/games/games.json";
+
+            using (var httpClient = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }))
+            {
+                httpClient.Timeout = TimeSpan.FromSeconds(60);
+                AddUserAgent(httpClient);
+
+                try
+                {
+                    var headRequest = new HttpRequestMessage(HttpMethod.Head, cdnUrl);
+                    using var headTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var headResponse = await httpClient.SendAsync(headRequest, headTimeout.Token);
+
+                    if (!headResponse.IsSuccessStatusCode)
+                    {
+                        Log.Error($"Failed to fetch metadata from {cdnUrl}. Status: {headResponse.StatusCode}");
+                        return;
+                    }
+
+                    DateTimeOffset? remoteLastModified = headResponse.Content.Headers.LastModified;
+
+                    bool shouldDownload = false;
+
+                    if (!File.Exists(jsonPath))
+                    {
+                        Log.Information("Local games.json not found. Downloading...");
+                        shouldDownload = true;
+                    }
+                    else if (remoteLastModified == null)
+                    {
+                        Log.Warning("Last-Modified header not found. Downloading games.json anyway.");
+                        shouldDownload = true;
+                    }
+                    else
+                    {
+                        var localLastModified = File.GetLastWriteTimeUtc(jsonPath);
+
+                        if (localLastModified >= remoteLastModified.Value.UtcDateTime)
+                        {
+                            Log.Information("Local games.json is up to date. Skipping download.");
+                            return;
+                        }
+                        else
+                        {
+                            Log.Information("Remote games.json is newer. Downloading new version.");
+                            shouldDownload = true;
+                        }
+                    }
+
+                    if (shouldDownload)
+                    {
+                        var jsonBytes = await httpClient.GetByteArrayAsync(cdnUrl);
+                        await File.WriteAllBytesAsync(jsonPath, jsonBytes);
+
+                        if (remoteLastModified != null)
+                        {
+                            File.SetLastWriteTimeUtc(jsonPath, remoteLastModified.Value.UtcDateTime);
+                        }
+
+                        Log.Information("Download complete");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Error downloading games.json");
+                }
+            }
+        }
+
+        public class GameEntry
+        {
+            [JsonPropertyName("name")]
+            public required string Name { get; set; }
+
+            [JsonPropertyName("executables")]
+            public required List<string> Executables { get; set; }
+
+            [JsonPropertyName("igdb")]
+            public IgdbInfo? Igdb { get; set; }
+
+            [JsonPropertyName("steam_id")]
+            public int? SteamId { get; set; }
+
+            // CDN icon id (https://segra.tv/api/games/icon/{icon}); not present for every game.
+            [JsonPropertyName("icon")]
+            public string? Icon { get; set; }
+
+            // Flattened IGDB id, only populated for the frontend game list (GetGameList); the catalog
+            // file itself uses the nested `igdb` object above.
+            [JsonPropertyName("igdbId")]
+            public int? IgdbId { get; set; }
+        }
+
+        public class IgdbInfo
+        {
+            [JsonPropertyName("id")]
+            public int Id { get; set; }
+
+            [JsonPropertyName("cover_image_id")]
+            public string? CoverImageId { get; set; }
+        }
+
+        public class BlacklistEntry
+        {
+            [JsonPropertyName("path_texts")]
+            public string[] PathTexts { get; set; } = [];
+
+            [JsonPropertyName("description_words")]
+            public string[] DescriptionWords { get; set; } = [];
+        }
+    }
+}

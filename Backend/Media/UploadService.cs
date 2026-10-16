@@ -1,0 +1,422 @@
+using Serilog;
+using System.Buffers;
+using System.Net;
+using System.Text.Json;
+using Segra.Backend.App;
+using Segra.Backend.Auth;
+using Segra.Backend.Core;
+using System.Diagnostics;
+using Segra.Backend.Shared;
+using System.Net.Http.Headers;
+using Segra.Backend.Core.Models;
+
+namespace Segra.Backend.Media
+{
+    internal static class UploadService
+    {
+        private static readonly HttpClient _httpClient = new()
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+
+        private static readonly Dictionary<string, CancellationTokenSource> _activeUploads = new();
+        private static readonly object _uploadLock = new();
+
+        public static void CancelUpload(string uploadId)
+        {
+            Log.Information($"[Upload] Cancel requested for: {uploadId}");
+
+            lock (_uploadLock)
+            {
+                if (_activeUploads.TryGetValue(uploadId, out var cts))
+                {
+                    cts.Cancel();
+                    Log.Information($"[Upload] Cancelled upload for: {uploadId}");
+                }
+                else
+                {
+                    Log.Warning($"[Upload] No active upload found for: {uploadId}");
+                }
+            }
+        }
+
+        private static int _staleUploadCheckStarted;
+
+        // Runs once per session, the first time the user is logged in
+        public static void CheckStaleUploads()
+        {
+            if (Settings.Instance.AirplaneMode) return;
+            if (Interlocked.Exchange(ref _staleUploadCheckStarted, 1) == 1) return;
+            _ = Task.Run(ClearStaleUploadUrls);
+        }
+
+        // Clears upload links to videos that no longer exist on the user's segra.tv account
+        private static async Task ClearStaleUploadUrls()
+        {
+            try
+            {
+                // Content can still be loading at startup, give it up to 5 seconds
+                for (int i = 0; i < 20 && AppState.Instance.Content.Count == 0; i++)
+                    await Task.Delay(250);
+
+                var uploads = AppState.Instance.Content.Where(content => !string.IsNullOrEmpty(content.UploadUrl)).ToList();
+
+                if (uploads.Count == 0) return;
+
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                using var request = new HttpRequestMessage(HttpMethod.Get, "https://segra.tv/api/user/videos");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await AuthService.GetJwtAsync());
+                using var response = await _httpClient.SendAsync(request, timeout.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Log.Warning($"[Upload] Skipping stale upload check, video list request failed with {(int)response.StatusCode}");
+                    return;
+                }
+
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+                var existingIds = new List<string>();
+                foreach (var video in doc.RootElement.GetProperty("videos").EnumerateArray())
+                {
+                    foreach (string field in new[] { "id", "nano_id" })
+                    {
+                        if (video.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String)
+                            existingIds.Add(value.GetString()!);
+                    }
+                }
+
+                int cleared = 0;
+                foreach (var content in uploads)
+                {
+                    // The upload URL always contains the video's nano id or uuid
+                    if (existingIds.Any(id => content.UploadUrl!.Contains(id))) continue;
+                    string metadataPath = FolderNames.GetMetadataFilePath(content.Type, content.Id);
+                    if (await ContentService.UpdateMetadataFile(metadataPath, c => c.UploadUrl = null) != null)
+                        cleared++;
+                }
+
+                if (cleared > 0)
+                {
+                    Log.Information($"[Upload] Cleared {cleared} upload links to videos that are no longer on segra.tv");
+                    await SettingsService.LoadContentFromFolderIntoState(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[Upload] Stale upload check failed: {ex.Message}");
+            }
+        }
+
+        public static async Task HandleUploadContent(JsonElement message)
+        {
+            using var work = BackgroundWork.Begin();
+            // Same file can be uploaded more than once at a time, so each upload gets its own id
+            string uploadId = Guid.NewGuid().ToString("N");
+            string fileName = "";
+            string title = "";
+            CancellationTokenSource? cts = null;
+
+            try
+            {
+                string id = message.GetProperty("Id").GetString()!;
+                title = message.GetProperty("Title").GetString()!;
+
+                Content? content = AppState.Instance.Content.FirstOrDefault(c => c.Id == id);
+
+                if (content == null)
+                {
+                    Log.Error($"Content not found in state for upload: {id}");
+                    return;
+                }
+
+                string filePath = content.FilePath;
+                fileName = Path.GetFileName(filePath);
+                string thumbnailPath = FolderNames.GetThumbnailFilePath(content.Type, content.Id);
+
+                cts = new CancellationTokenSource();
+                lock (_uploadLock)
+                {
+                    _activeUploads[uploadId] = cts;
+                }
+
+                var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+                using var formData = new MultipartFormDataContent();
+
+                int lastSentProgress = -1;
+                void ProgressHandler(long sent, long total)
+                {
+                    if (total <= 0) return;
+                    int progress = (int)(sent / (double)total * 100);
+
+                    if (progress != lastSentProgress)
+                    {
+                        lastSentProgress = progress;
+
+                        if (progress >= 100)
+                        {
+                            _ = MessageService.SendFrontendMessage("UploadProgress", new
+                            {
+                                title,
+                                uploadId,
+                                fileName,
+                                thumbnailPath,
+                                progress = 100,
+                                status = "processing",
+                                message = "Processing..."
+                            });
+                        }
+                        else
+                        {
+                            _ = MessageService.SendFrontendMessage("UploadProgress", new
+                            {
+                                title,
+                                uploadId,
+                                fileName,
+                                thumbnailPath,
+                                progress,
+                                status = "uploading",
+                                message = $"Uploading... {progress}%"
+                            });
+                        }
+                    }
+                }
+
+                var fileContent = new ProgressableStreamContent(fileStream, "application/octet-stream", ProgressHandler, cts.Token);
+                formData.Add(fileContent, "file", fileName);
+
+                if (!string.IsNullOrEmpty(content.Game))
+                {
+                    formData.Add(new StringContent(content.Game), "game");
+                }
+                if (content.IgdbId.HasValue)
+                {
+                    formData.Add(new StringContent(content.IgdbId.Value.ToString()), "igdbid");
+                }
+                string? gameExeSubPath = GetGameExeSubPath(content.GameExePath);
+                if (!string.IsNullOrEmpty(gameExeSubPath))
+                {
+                    formData.Add(new StringContent(gameExeSubPath), "gameexepath");
+                }
+                AddOptionalContent(formData, message, "Title");
+                AddOptionalContent(formData, message, "Description");
+                AddOptionalContent(formData, message, "Visibility");
+
+                await MessageService.SendFrontendMessage("UploadProgress", new
+                {
+                    title,
+                    uploadId,
+                    fileName,
+                    thumbnailPath,
+                    progress = 0,
+                    status = "uploading",
+                    message = "Starting upload..."
+                });
+
+                var request = new HttpRequestMessage(HttpMethod.Post, "https://processing.segra.tv/upload")
+                {
+                    Content = formData
+                };
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await AuthService.GetJwtAsync());
+
+                var response = await _httpClient.SendAsync(request, cts.Token);
+                response.EnsureSuccessStatusCode();
+
+                lock (_uploadLock)
+                {
+                    _activeUploads.Remove(uploadId);
+                }
+
+                await MessageService.SendFrontendMessage("UploadProgress", new
+                {
+                    title,
+                    uploadId,
+                    fileName,
+                    progress = 100,
+                    status = "done",
+                    message = "Upload completed successfully"
+                });
+
+                var responseContent = await response.Content.ReadAsStringAsync();
+                Log.Information($"Upload success: {responseContent}");
+
+                // Parse the response to extract the URL and store it on the content
+                if (!string.IsNullOrEmpty(responseContent))
+                {
+                    try
+                    {
+                        var responseJson = JsonSerializer.Deserialize<JsonElement>(responseContent);
+                        if (responseJson.TryGetProperty("success", out var successElement) &&
+                            successElement.GetBoolean() &&
+                            responseJson.TryGetProperty("url", out var urlElement))
+                        {
+                            string url = urlElement.GetString()!;
+                            if (!string.IsNullOrEmpty(url))
+                            {
+                                // Update the content with the URL (re-resolved by id in case state was reloaded mid-upload)
+                                var contentToUpdate = AppState.Instance.Content.FirstOrDefault(c => c.Id == content.Id);
+                                Log.Information($"Content to update: {contentToUpdate?.FileName ?? "not found"}");
+
+                                if (contentToUpdate != null)
+                                {
+                                    contentToUpdate.UploadUrl = url;
+
+                                    // Also update the metadata file
+                                    string metadataFilePath = FolderNames.GetMetadataFilePath(contentToUpdate.Type, contentToUpdate.Id);
+
+                                    var updatedContent = await ContentService.UpdateMetadataFile(metadataFilePath, content =>
+                                    {
+                                        content.UploadUrl = url;
+                                    });
+
+                                    if (updatedContent != null)
+                                    {
+                                        Log.Information($"Updated metadata file with upload URL: {metadataFilePath}");
+                                    }
+
+                                    Log.Information($"Updated content with upload URL: {url}");
+                                    await SettingsService.LoadContentFromFolderIntoState(true);
+                                }
+
+                                // Open browser if setting is enabled
+                                if (Settings.Instance.ClipShowInBrowserAfterUpload)
+                                {
+                                    Log.Information($"Opening URL in browser: {url}");
+                                    Process.Start(new ProcessStartInfo
+                                    {
+                                        FileName = url,
+                                        UseShellExecute = true
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"Failed to parse upload response or update content: {ex.Message}");
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Information($"[Upload] Upload cancelled for: {fileName}");
+
+                lock (_uploadLock)
+                {
+                    _activeUploads.Remove(uploadId);
+                }
+
+                await MessageService.SendFrontendMessage("UploadProgress", new
+                {
+                    title,
+                    uploadId,
+                    fileName,
+                    progress = 0,
+                    status = "error",
+                    message = "Upload cancelled"
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Upload failed: {ex.Message}");
+
+                lock (_uploadLock)
+                {
+                    _activeUploads.Remove(uploadId);
+                }
+
+                await MessageService.ShowModal(
+                    "Upload Error",
+                    "The upload failed.\n" + ex.Message,
+                    "error",
+                    "Could not upload clip"
+                );
+
+                await MessageService.SendFrontendMessage("UploadProgress", new
+                {
+                    title,
+                    uploadId,
+                    fileName,
+                    progress = 0,
+                    status = "error",
+                    message = ex.Message
+                });
+            }
+            finally
+            {
+                cts?.Dispose();
+            }
+        }
+
+        public class ProgressableStreamContent : HttpContent
+        {
+            private readonly Stream _content;
+            private readonly Action<long, long> _progressCallback;
+            private readonly CancellationToken _cancellationToken;
+
+            public ProgressableStreamContent(Stream content, string mediaType, Action<long, long> progressCallback, CancellationToken cancellationToken = default)
+            {
+                _content = content ?? throw new ArgumentNullException(nameof(content));
+                _progressCallback = progressCallback;
+                _cancellationToken = cancellationToken;
+                Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+            }
+
+            protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            {
+                if (_content.CanSeek)
+                    _content.Position = 0;
+
+                long totalBytes = _content.Length;
+                long totalWritten = 0;
+                byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
+
+                try
+                {
+                    int read;
+                    while ((read = await _content.ReadAsync(buffer, _cancellationToken)) > 0)
+                    {
+                        await stream.WriteAsync(buffer.AsMemory(0, read), _cancellationToken);
+                        totalWritten += read;
+                        _progressCallback?.Invoke(totalWritten, totalBytes);
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = _content.Length;
+                return true;
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                    _content.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+
+        private static void AddOptionalContent(MultipartFormDataContent formData, JsonElement message, string field)
+        {
+            if (message.TryGetProperty(field, out JsonElement element))
+            {
+                formData.Add(new StringContent(element.GetString()!), field.ToLower());
+            }
+        }
+
+        // Sends only the exe name and its parent folder, never the full local path.
+        private static string? GetGameExeSubPath(string? exePath)
+        {
+            if (string.IsNullOrWhiteSpace(exePath))
+            {
+                return null;
+            }
+
+            var parts = PathUtils.Normalize(exePath).Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return string.Join('/', parts.TakeLast(2));
+        }
+    }
+}

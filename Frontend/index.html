@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-theme="segra">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Segra</title>
+    <style>
+      /* Critical CSS applied before the bundle loads, so the first paint of the page is
+         the app background instead of a white flash. The rest of the theme lives in
+         globals.css (--color-base-300: #171f2a). */
+      html,
+      body,
+      #root {
+        background-color: #171f2a;
+      }
+    </style>
+  </head>
+  <body style="font-family: Roboto, sans-serif">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,382 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { PreRecording, Recording, GameResponse, GameSetting, Display } from '../Models/types';
+import { Ellipsis, Ban } from 'lucide-react';
+import { Gamepad2, Monitor, AppWindow } from 'lucide';
+import { MorphIcon } from 'morphicons/react';
+import { useSettings, useSettingsUpdater } from '../Context/SettingsContext';
+import { useAppState } from '../Context/AppStateContext';
+import { sendMessageToBackend } from '../Utils/MessageUtils';
+import Button from './Button';
+import DropdownSelect from './DropdownSelect';
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+interface RecordingCardProps {
+  recording?: Recording;
+  preRecording?: PreRecording;
+}
+
+const RecordingCard: React.FC<RecordingCardProps> = ({ recording, preRecording }) => {
+  const timerRef = useRef<HTMLSpanElement>(null);
+  const previewImgRef = useRef<HTMLImageElement>(null);
+  const settings = useSettings();
+  const showGameBackground = settings.showGameBackground && !settings.airplaneMode;
+  const updateSettings = useSettingsUpdater();
+  const state = useAppState();
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const lastFetchedGameRef = useRef<string | null>(null);
+  const [showShockwave, setShowShockwave] = useState(false);
+  const [previewEnabled, setPreviewEnabled] = useState(false);
+  const [hasPreviewFrame, setHasPreviewFrame] = useState(false);
+
+  const gameName = preRecording ? preRecording.game : recording?.game;
+  const gameListEntry = state.gameList.find((g) => g.name === gameName);
+  const canBlockGame = !!gameListEntry && gameListEntry.executables.length > 0;
+
+  // Monitor dropdown next to the Display capture indicator: manual recordings only, when several
+  // monitors share the display's aspect ratio (game recordings follow the game's monitor).
+  const isManualRecording = gameName === 'Manual Recording';
+  const captureMode = recording?.isUsingGameHook
+    ? 'game'
+    : recording?.isUsingWindowCapture
+      ? 'window'
+      : 'display';
+  const isDisplayCapture = !!recording && captureMode === 'display';
+  const captureTooltip =
+    captureMode === 'game'
+      ? 'Game capture (using game hook)'
+      : captureMode === 'window'
+        ? 'Window capture (game hook unavailable)'
+        : 'Display capture (not using game hook)';
+  const captureTooltipColor = captureMode === 'game' ? 'tooltip-success' : 'tooltip-warning';
+  const CaptureIcon =
+    captureMode === 'game' ? Gamepad2 : captureMode === 'window' ? AppWindow : Monitor;
+  const displayAspectRatio = (d: Display) => (d.height > 0 ? d.width / d.height : 0);
+  // Resolve against the live display list: a cached selectedDisplay from an older version may
+  // lack the width/height fields needed for the aspect-ratio comparison.
+  const currentDisplay =
+    (settings.selectedDisplay &&
+      state.displays.find((d) => d.deviceId === settings.selectedDisplay!.deviceId)) ||
+    state.displays[0] ||
+    null;
+  const sameRatioDisplays = useMemo(() => {
+    if (!currentDisplay || displayAspectRatio(currentDisplay) <= 0) return [];
+    return state.displays.filter(
+      (d) => Math.abs(displayAspectRatio(d) - displayAspectRatio(currentDisplay)) < 0.02,
+    );
+  }, [state.displays, currentDisplay]);
+  const showMonitorDropdown = isDisplayCapture && isManualRecording && sameRatioDisplays.length > 1;
+
+  const monitorItems = sameRatioDisplays.map((d) => {
+    const displayIndex = state.displays.findIndex((other) => other.deviceId === d.deviceId);
+    const hasDuplicateName = state.displays.some(
+      (other, j) => j !== displayIndex && other.deviceName === d.deviceName,
+    );
+    return {
+      value: d.deviceId,
+      label: hasDuplicateName
+        ? `${d.deviceName} (${displayIndex + 1})${d.isPrimary ? ' (Primary)' : ''}`
+        : `${d.deviceName}${d.isPrimary ? ' (Primary)' : ''}`,
+    };
+  });
+
+  const handleAddToBlocklist = useCallback(() => {
+    if (!gameListEntry) return;
+    const games = settings.games.some((g) => g.name === gameListEntry.name)
+      ? settings.games.map((g) => (g.name === gameListEntry.name ? { ...g, record: false } : g))
+      : [
+          ...settings.games,
+          {
+            name: gameListEntry.name,
+            paths: gameListEntry.executables,
+            igdbId: gameListEntry.igdbId ?? null,
+            icon: gameListEntry.icon,
+            customIcon: null,
+            record: false,
+            qualityOverride: null,
+            recordingModeOverride: null,
+            discardSessionsWithoutBookmarksOverride: null,
+          } as GameSetting,
+        ];
+    updateSettings({ games });
+    sendMessageToBackend('StopRecording');
+  }, [gameListEntry, settings.games, updateSettings]);
+
+  // Listen for bookmark created, preview state, and preview-frame events
+  useEffect(() => {
+    const handleMessage = (event: CustomEvent) => {
+      const method = event.detail?.method;
+      if (method === 'BookmarkCreated' || method === 'ReplayBufferSaveStarted') {
+        setShowShockwave(true);
+        setTimeout(() => setShowShockwave(false), 600);
+      } else if (method === 'RecordingPreviewState') {
+        const enabled = !!event.detail?.content?.enabled;
+        setPreviewEnabled((prev) => {
+          // On re-enable, hide the stale frame via opacity so the new one fades in.
+          // (We don't clear src — a blank src would render the broken-image icon.)
+          // On disable, keep hasPreviewFrame so the last frame stays visible through the exit animation.
+          if (enabled && !prev) {
+            setHasPreviewFrame(false);
+          }
+          return enabled;
+        });
+      } else if (method === 'RecordingPreviewFrame') {
+        const img = previewImgRef.current;
+        const b64 = event.detail?.content?.jpegBase64;
+        if (img && typeof b64 === 'string' && b64.length > 0) {
+          img.src = `data:image/jpeg;base64,${b64}`;
+          setHasPreviewFrame(true);
+        }
+      }
+    };
+
+    window.addEventListener('websocket-message', handleMessage as EventListener);
+    return () => {
+      window.removeEventListener('websocket-message', handleMessage as EventListener);
+    };
+  }, []);
+
+  // Reset preview-enabled when recording stops; let the exit animation play with the last frame still visible.
+  useEffect(() => {
+    if (!recording) {
+      setPreviewEnabled(false);
+    }
+  }, [recording]);
+
+  useEffect(() => {
+    if (preRecording) {
+      if (timerRef.current) timerRef.current.textContent = '00:00';
+      return;
+    }
+
+    if (!recording?.startTime) return;
+
+    const startTime = new Date(recording.startTime).getTime();
+
+    const updateElapsedTime = () => {
+      if (!timerRef.current) return;
+      const now = Date.now();
+      const secondsElapsed = Math.max(0, Math.floor((now - startTime) / 1000));
+
+      const hours = Math.floor(secondsElapsed / 3600);
+      const minutes = Math.floor((secondsElapsed % 3600) / 60);
+      const seconds = secondsElapsed % 60;
+
+      timerRef.current.textContent =
+        hours > 0
+          ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+          : `${pad(minutes)}:${pad(seconds)}`;
+    };
+
+    updateElapsedTime();
+    const intervalId = setInterval(updateElapsedTime, 1000);
+    return () => clearInterval(intervalId);
+  }, [recording?.startTime, preRecording]);
+
+  // Fetch game data from Segra.tv API
+  const fetchGameData = useCallback(async () => {
+    // Skip API call entirely if game background is disabled
+    if (!showGameBackground) {
+      setCoverUrl(null);
+      lastFetchedGameRef.current = null;
+      return;
+    }
+
+    const gameName = preRecording ? preRecording.game : recording?.game;
+
+    // Don't fetch for "Manual Recording"
+    if (!gameName || gameName === 'Manual Recording') {
+      setCoverUrl(null);
+      return;
+    }
+
+    try {
+      // Use coverImageId directly if available, otherwise search by name
+      const coverImageId = recording?.coverImageId || preRecording?.coverImageId;
+      if (coverImageId) {
+        setCoverUrl(`https://segra.tv/api/games/cover/${coverImageId}`);
+        lastFetchedGameRef.current = gameName;
+        return;
+      }
+
+      // Skip if we already fetched for this game
+      if (lastFetchedGameRef.current === gameName) {
+        return;
+      }
+
+      const response = await fetch(
+        `https://segra.tv/api/games/search?name=${encodeURIComponent(gameName)}`,
+      );
+
+      if (!response.ok) {
+        throw new Error('Game not found');
+      }
+
+      const data: GameResponse = await response.json();
+
+      if (data.game?.cover?.image_id) {
+        setCoverUrl(`https://segra.tv/api/games/cover/${data.game.cover.image_id}`);
+      }
+      lastFetchedGameRef.current = gameName;
+    } catch (error) {
+      console.error('Error fetching game data:', error);
+      setCoverUrl(null);
+      lastFetchedGameRef.current = gameName;
+    }
+  }, [preRecording, recording, showGameBackground]);
+
+  // Call fetchGameData when game changes
+  useEffect(() => {
+    fetchGameData();
+  }, [fetchGameData]);
+
+  return (
+    <div className="mb-2 px-2">
+      <div className="group bg-base-300 border border-base-400 border-opacity-75 rounded-lg px-3 py-3.5 cursor-default relative">
+        {/* Shockwave effect on bookmark creation */}
+        {showShockwave && (
+          <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden rounded-lg">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-0 h-0 rounded-full bg-primary/40 animate-shockwave" />
+          </div>
+        )}
+        {/* Background image with game cover */}
+        {coverUrl && showGameBackground && (
+          <div className="absolute inset-0 z-0 opacity-25">
+            <div
+              className="absolute inset-0 rounded-[7px]"
+              style={{
+                backgroundImage: `url(${coverUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
+              }}
+            ></div>
+          </div>
+        )}
+
+        {/* Recording Indicator */}
+        <div className="flex items-center justify-between mb-1 relative z-20">
+          <div className="flex items-center">
+            <span
+              className={`w-3 h-3 shrink-0 mb-0.5 rounded-full mr-1.5 ${preRecording ? 'bg-orange-500' : 'bg-red-500'}`}
+            ></span>
+            <span className="text-gray-200 text-sm font-medium">
+              {preRecording ? preRecording.status : 'Recording'}
+            </span>
+            {!preRecording && (
+              <div
+                className={`tooltip tooltip-right ${captureTooltipColor} flex items-center ml-1.5 [&::before]:delay-200 [&::after]:delay-200`}
+                data-tip={captureTooltip}
+              >
+                <div className="flex h-5 w-5 cursor-default items-center justify-center">
+                  <MorphIcon
+                    icon={CaptureIcon}
+                    size={20}
+                    spring="snappy"
+                    className={`text-gray-300 transition-transform ${captureMode === 'game' ? '' : 'scale-90'}`}
+                  />
+                </div>
+              </div>
+            )}
+            <AnimatePresence initial={false}>
+              {showMonitorDropdown && (
+                <motion.div
+                  className="ml-1 flex w-5"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  <DropdownSelect
+                    items={monitorItems}
+                    value={currentDisplay?.deviceId}
+                    onChange={(val) => {
+                      const display = state.displays.find((d) => d.deviceId === val);
+                      if (display) updateSettings({ selectedDisplay: display });
+                    }}
+                    align="start"
+                    buttonClassName="btn btn-ghost btn-xs flex border-none h-5 min-h-5 px-0 shadow-none"
+                    menuClassName="dropdown-content menu menu-md bg-base-300 border border-base-400 rounded-box z-[20000] w-56 p-2 shadow flex-nowrap"
+                    // Chevron-only trigger: the swap icon already shows the capture indicator.
+                    buttonContent={null}
+                    forceDirection={sameRatioDisplays.length === 2 ? 'down' : 'up'}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          {canBlockGame && (
+            <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity delay-200">
+              <div className="dropdown dropdown-top" onClick={(e) => e.stopPropagation()}>
+                <label
+                  tabIndex={0}
+                  className="cursor-pointer rounded-full p-0.5 hover:bg-white/10 active:bg-white/10 flex items-center justify-center"
+                >
+                  <Ellipsis className="h-5 w-5 text-gray-300" />
+                </label>
+                <ul
+                  tabIndex={0}
+                  className="dropdown-content menu bg-base-300 border border-base-400 rounded-box z-[9999] w-52 p-2"
+                >
+                  <li>
+                    <Button
+                      variant="menuDanger"
+                      onClick={() => {
+                        (document.activeElement as HTMLElement).blur();
+                        handleAddToBlocklist();
+                      }}
+                    >
+                      <Ban size={20} />
+                      <span>Add to Block List</span>
+                    </Button>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Recording Details */}
+        <div className="flex items-center text-gray-400 text-sm relative z-10">
+          <div className="flex items-center max-w-[105%]">
+            <span ref={timerRef} className="tabular-nums">
+              00:00
+            </span>
+            <p className="truncate ml-2">{preRecording ? preRecording.game : recording?.game}</p>
+          </div>
+        </div>
+
+        {/* Live preview (toggled by hotkey while actively recording) */}
+        <AnimatePresence initial={false}>
+          {recording && previewEnabled && (
+            <motion.div
+              initial={{ opacity: 0, height: 0, marginTop: 0 }}
+              animate={{
+                opacity: 1,
+                height: 'auto',
+                marginTop: 8,
+                transition: {
+                  duration: 0.25,
+                  height: { type: 'spring', stiffness: 300, damping: 30 },
+                },
+              }}
+              exit={{ opacity: 0, height: 0, marginTop: 0, transition: { duration: 0.2 } }}
+              className="relative z-10 w-full overflow-hidden"
+            >
+              <div className="aspect-video w-full overflow-hidden rounded bg-black">
+                <img
+                  ref={previewImgRef}
+                  alt=""
+                  className={`h-full w-full object-contain transition-opacity duration-200 ${hasPreviewFrame ? 'opacity-100' : 'opacity-0'}`}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
+export default RecordingCard;

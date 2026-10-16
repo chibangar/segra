@@ -1,0 +1,42 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Segra (Linux)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build (linux)",
+            "program": "${workspaceFolder}/bin/Debug/net10.0/Segra",
+            "args": [],
+            "cwd": "${workspaceFolder}/bin/Debug/net10.0",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            // OBS lib dirs on LD_LIBRARY_PATH make LinuxObsRuntime skip its re-exec, which would detach the debugger
+            "env": {
+                "SEGRA_VSCODE": "1",
+                "LD_LIBRARY_PATH": "${env:HOME}/.config/Segra/obs/lib:${env:HOME}/.config/Segra/obs-runtime/lib:${workspaceFolder}/bin/Debug/net10.0:${env:LD_LIBRARY_PATH}"
+            }
+        },
+        {
+            // Use IntelliSense to find out which attributes exist for C# debugging
+            // Use hover for the description of the existing attributes
+            // For further information visit https://github.com/dotnet/vscode-csharp/blob/main/debugger-launchjson.md
+            "name": ".NET Core Launch (console)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            // If you have changed target frameworks, make sure to update the program path.
+            "program": "${workspaceFolder}/bin/Debug/net10.0-windows10.0.19041.0/Segra.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/bin/Debug/net10.0-windows10.0.19041.0",
+            // For more information about the 'console' field, see https://aka.ms/VSCode-CS-LaunchJson-Console
+            "console": "externalTerminal",
+            "internalConsoleOptions": "openOnSessionStart",
+            "stopAtEntry": false,
+            "env": {
+                "SEGRA_VSCODE": "1"
+            }
+        }
+    ]
+}

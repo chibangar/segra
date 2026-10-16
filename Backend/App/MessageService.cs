@@ -1,0 +1,1095 @@
+using Serilog;
+using System.Net;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Segra.Backend.Auth;
+using Segra.Backend.Core;
+using Segra.Backend.Games;
+using Segra.Backend.Media;
+using Segra.Backend.Shared;
+using Segra.Backend.Platform;
+using System.Net.WebSockets;
+using Segra.Backend.Recorder;
+using Segra.Backend.Core.Models;
+using Segra.Backend.Windows.Storage;
+#if WINDOWS
+using Segra.Backend.Windows.Input.HotkeyBroker;
+using Segra.Backend.Windows.Codecs;
+#endif
+
+namespace Segra.Backend.App
+{
+    public static class MessageService
+    {
+        private static WebSocket? activeWebSocket;
+        // Serializes SendAsync only; waiting for a frontend happens outside this lock.
+        private static readonly SemaphoreSlim sendLock = new SemaphoreSlim(1, 1);
+        private static readonly object connectionGate = new();
+        private static TaskCompletionSource connectedSignal = NewConnectedSignal();
+        private static readonly JsonSerializerOptions jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
+        // How long a one-shot message waits for a frontend to connect before being dropped.
+        private const int ConnectGraceMs = 10000;
+
+        // Rebuilt by the NewConnection handler, so skipping them while no frontend is connected loses nothing.
+        private static readonly HashSet<string> ResentOnConnect = new(StringComparer.Ordinal)
+        {
+            "State",
+            "Settings",
+            "GameList",
+            "AppVersion",
+            "UpdateProgress",
+            "ReleaseNotes",
+            "pong",
+            "RecordingPreviewState",
+            "RecordingPreviewFrame",
+            "MigrationStatus"
+        };
+
+        private const int MaxPendingModals = 10;
+        private static readonly List<PendingModal> pendingModals = new();
+        private sealed record PendingModal(string Title, string? Subtitle, string Description, string Type);
+
+        private static readonly object stateSendGate = new();
+        private static bool stateDirty;
+        private static bool statePumpRunning;
+        private static Task statePump = Task.CompletedTask;
+
+        public static async Task HandleMessage(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+            {
+                Log.Information("Received empty message.");
+                return;
+            }
+
+            // Handle heartbeat ping (plain string, not JSON)
+            if (message == "ping")
+            {
+                await SendFrontendMessage("pong", new { });
+                return;
+            }
+
+            Log.Information("Websocket message received: " + GeneralUtils.RedactSensitiveInfo(message));
+
+            try
+            {
+                var jsonDoc = JsonDocument.Parse(message);
+                var root = jsonDoc.RootElement;
+
+                if (root.TryGetProperty("Method", out JsonElement methodElement))
+                {
+                    string? method = methodElement.GetString();
+
+                    if (method == null)
+                    {
+                        Log.Warning("Received message with null method.");
+                        return;
+                    }
+
+                    switch (method)
+                    {
+                        case "ToggleFullscreen":
+                            if (root.TryGetProperty("Parameters", out var fsParams) &&
+                                fsParams.TryGetProperty("enabled", out var enabledEl))
+                            {
+                                bool enabled = enabledEl.GetBoolean();
+                                try
+                                {
+                                    Program.SetFullscreen(enabled);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log.Error(ex, "Failed to toggle fullscreen");
+                                }
+                            }
+                            break;
+                        case "Login":
+                            root.TryGetProperty("Parameters", out JsonElement loginParameterElement);
+                            string accessToken = loginParameterElement.GetProperty("accessToken").GetString()!;
+                            string refreshToken = loginParameterElement.GetProperty("refreshToken").GetString()!;
+                            _ = Task.Run(() =>
+                            {
+                                AuthService.Login(accessToken, refreshToken);
+                                UploadService.CheckStaleUploads();
+                            });
+                            break;
+                        case "Logout":
+                            _ = Task.Run(AuthService.Logout);
+                            break;
+                        case "LoginWithDiscord":
+                            _ = Task.Run(DiscordLoginService.Begin);
+                            break;
+                        case "CancelDiscordLogin":
+                            DiscordLoginService.Cancel();
+                            break;
+                        case "CancelClip":
+                            if (root.TryGetProperty("Parameters", out var cancelClipParams) &&
+                                cancelClipParams.TryGetProperty("id", out var clipId))
+                            {
+                                ClipService.CancelClip(clipId.GetInt32());
+                            }
+                            break;
+                        case "CreateClip":
+                            root.TryGetProperty("Parameters", out JsonElement clipParameterElement);
+                            _ = Task.Run(() => HandleCreateClip(clipParameterElement));
+                            break;
+                        case "MergeContent":
+                            root.TryGetProperty("Parameters", out JsonElement mergeParameterElement);
+                            _ = Task.Run(() => HandleMergeContent(mergeParameterElement));
+                            break;
+                        case "CheckMerge":
+                            root.TryGetProperty("Parameters", out JsonElement checkMergeParameterElement);
+                            _ = Task.Run(() => HandleCheckMerge(checkMergeParameterElement));
+                            break;
+                        case "CreateAiClip":
+                            root.TryGetProperty("Parameters", out JsonElement aiClipParameterElement);
+                            _ = Task.Run(() => HandleCreateAiClip(aiClipParameterElement));
+                            break;
+                        case "CompressVideo":
+                            root.TryGetProperty("Parameters", out JsonElement compressParameterElement);
+                            _ = Task.Run(() => HandleCompressVideo(compressParameterElement));
+                            break;
+                        case "ApplyUpdate":
+                            UpdateService.ApplyUpdate();
+                            break;
+                        case "CheckForUpdates":
+                            Log.Information("CheckForUpdates command received.");
+                            _ = Task.Run(() => UpdateService.UpdateAppIfNecessary(forceCheck: true));
+                            break;
+#if WINDOWS
+                        case "InstallHotkeyBroker":
+                            _ = Task.Run(HotkeyBrokerSetup.InstallAsync);
+                            break;
+                        case "InstallHevcExtension":
+                            _ = Task.Run(HevcExtensionInstaller.InstallAsync);
+                            break;
+                        case "RestartApp":
+                            _ = Task.Run(() => Program.Restart("requested by the user", minimized: false));
+                            break;
+#endif
+                        case "DeleteContent":
+                            root.TryGetProperty("Parameters", out JsonElement deleteContentParameterElement);
+                            _ = Task.Run(() => HandleDeleteContent(deleteContentParameterElement));
+                            break;
+                        case "DeleteMultipleContent":
+                            root.TryGetProperty("Parameters", out JsonElement deleteMultipleContentParameterElement);
+                            _ = Task.Run(() => HandleDeleteMultipleContent(deleteMultipleContentParameterElement));
+                            break;
+                        case "UploadContent":
+                            root.TryGetProperty("Parameters", out JsonElement uploadContentParameterElement);
+                            _ = Task.Run(() => UploadService.HandleUploadContent(uploadContentParameterElement));
+                            break;
+                        case "CancelUpload":
+                            if (root.TryGetProperty("Parameters", out var cancelUploadParams) &&
+                                cancelUploadParams.TryGetProperty("uploadId", out var uploadIdElement))
+                            {
+                                UploadService.CancelUpload(uploadIdElement.GetString()!);
+                            }
+                            break;
+                        case "OpenFileLocation":
+                            if (root.TryGetProperty("Parameters", out JsonElement openFileLocationParameterElement) &&
+                                openFileLocationParameterElement.TryGetProperty("FilePath", out JsonElement filePathElement) &&
+                                filePathElement.ValueKind == JsonValueKind.String)
+                            {
+                                PlatformServices.Dialogs.OpenFileLocation(filePathElement.GetString()!);
+                            }
+                            else
+                            {
+                                Log.Warning("FilePath parameter not found in OpenFileLocation message");
+                            }
+                            break;
+                        case "CopyFileToClipboard":
+                            root.TryGetProperty("Parameters", out JsonElement copyFileParams);
+                            if (copyFileParams.TryGetProperty("FilePath", out JsonElement copyFilePath))
+                            {
+                                string clipboardFilePath = copyFilePath.GetString()!;
+                                if (File.Exists(clipboardFilePath))
+                                {
+                                    PlatformServices.Dialogs.CopyFileToClipboard(clipboardFilePath);
+                                }
+                                else
+                                {
+                                    Log.Warning($"File not found for clipboard copy: {clipboardFilePath}");
+                                }
+                            }
+                            break;
+                        case "CopyCompressedFileToClipboard":
+                            root.TryGetProperty("Parameters", out JsonElement copyCompressedParams);
+                            if (copyCompressedParams.TryGetProperty("FilePath", out JsonElement copyCompressedFilePath) &&
+                                copyCompressedParams.TryGetProperty("MaxSizeMb", out JsonElement copyCompressedMaxSizeMb))
+                            {
+                                string compressedSourcePath = copyCompressedFilePath.GetString()!;
+                                int maxSizeMb = copyCompressedMaxSizeMb.GetInt32();
+                                _ = Task.Run(() => CompressionService.CopyCompressedToClipboard(compressedSourcePath, maxSizeMb));
+                            }
+                            else
+                            {
+                                Log.Warning("FilePath or MaxSizeMb parameter not found in CopyCompressedFileToClipboard message");
+                            }
+                            break;
+                        case "OpenInBrowser":
+                            root.TryGetProperty("Parameters", out JsonElement openInBrowserParameterElement);
+                            if (openInBrowserParameterElement.TryGetProperty("Url", out JsonElement urlElement))
+                            {
+                                string url = urlElement.GetString()!;
+                                Log.Information($"Opening URL in browser: {url}");
+                                PlatformServices.Dialogs.OpenUrl(url);
+                            }
+                            else
+                            {
+                                Log.Error("URL parameter not found in OpenInBrowser message");
+                            }
+                            break;
+                        case "OpenLogsLocation":
+                            _ = Task.Run(() => DiagnosticsService.LogSnapshot());
+                            string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Segra");
+                            string? logFilePath = Directory.GetFiles(logDir, "*.log").FirstOrDefault();
+                            if (!string.IsNullOrEmpty(logFilePath))
+                            {
+                                PlatformServices.Dialogs.OpenFileLocation(logFilePath);
+                            }
+                            else
+                            {
+                                Log.Warning("No log files found in the Segra directory");
+                            }
+                            break;
+                        case "SelectGameExecutable":
+                            await HandleSelectGameExecutable();
+                            break;
+                        case "StartRecording":
+                            if (AppState.Instance.Recording != null || AppState.Instance.PreRecording != null)
+                            {
+                                Log.Information("Recording already in progress. Skipping...");
+                                return;
+                            }
+
+                            _ = Task.Run(() => OBSService.StartRecording(startManually: true));
+                            break;
+                        case "StopRecording":
+                            _ = Task.Run(() => OBSService.StopRecording(userRequested: true));
+                            break;
+                        case "RefreshStorageStats":
+                            StorageService.UpdateRecordingDriveSpaceInState();
+                            break;
+                        case "NewConnection":
+                            Log.Information("NewConnection command received.");
+                            await SendSettingsToFrontend("New connection");
+                            await SendStateToFrontend("New connection");
+
+                            await SendGameList();
+
+                            // canSelfUpdate: false on Linux/Flatpak, where the package manager owns updates.
+                            // Informational version, not GetName().Version: it keeps the -beta.N suffix,
+                            // which the frontend's What's New check needs on Flatpak (no Velopack metadata).
+                            string appVersion = UpdateService.UpdateManager.CurrentVersion?.ToString()
+                                ?? Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                                ?? "0.0.0";
+
+                            await SendFrontendMessage("AppVersion", new
+                            {
+                                version = appVersion,
+#if WINDOWS
+                                canSelfUpdate = true,
+#else
+                                canSelfUpdate = false,
+#endif
+                            });
+
+                            await UpdateService.SendCurrentUpdateProgressToFrontend();
+                            await SendFrontendMessage("MigrationStatus", MigrationService.Status);
+                            await FlushPendingModalsAsync();
+                            _ = Task.Run(() => UpdateService.GetReleaseNotes());
+                            break;
+                        case "SetVideoLocation":
+                            await SetVideoLocationAsync();
+                            Log.Information("SetVideoLocation command received.");
+                            break;
+                        case "SetCacheLocation":
+                            await SetCacheLocationAsync();
+                            Log.Information("SetCacheLocation command received.");
+                            break;
+                        case "SetHotkeysPaused":
+                            root.TryGetProperty("Parameters", out JsonElement hotkeysPausedElement);
+                            Segra.Backend.Windows.Input.HotkeyCaptureService.SetPaused(
+                                hotkeysPausedElement.ValueKind == JsonValueKind.Object
+                                && hotkeysPausedElement.TryGetProperty("paused", out JsonElement pausedElement)
+                                && pausedElement.ValueKind == JsonValueKind.True);
+                            break;
+                        case "ResetScreenSelection":
+                            Settings.Instance.PipeWireRestoreToken = null;
+                            SettingsService.SaveSettings();
+                            _ = SendSettingsToFrontend("Screen selection reset");
+                            Log.Information("Cleared the saved screen-share choice; the next display capture asks again");
+                            break;
+                        case "UpdateSettings":
+                            root.TryGetProperty("Parameters", out JsonElement settingsParameterElement);
+                            Log.Information("UpdateSettings command received.");
+                            await SettingsService.HandleUpdateSettings(settingsParameterElement);
+                            break;
+                        case "AddBookmark":
+                            root.TryGetProperty("Parameters", out JsonElement bookmarkParameterElement);
+                            await ContentService.HandleAddBookmark(bookmarkParameterElement);
+                            Log.Information("AddBookmark command received.");
+                            break;
+                        case "DeleteBookmark":
+                            root.TryGetProperty("Parameters", out JsonElement deleteBookmarkParameterElement);
+                            await ContentService.HandleDeleteBookmark(deleteBookmarkParameterElement);
+                            Log.Information("DeleteBookmark command received.");
+                            break;
+                        case "RenameContent":
+                            root.TryGetProperty("Parameters", out JsonElement renameContentParameterElement);
+                            await ContentService.HandleRenameContent(renameContentParameterElement);
+                            Log.Information("RenameContent command received.");
+                            break;
+                        case "ImportFile":
+                            root.TryGetProperty("Parameters", out JsonElement importParameterElement);
+                            _ = Task.Run(() => ImportService.HandleImportFile(importParameterElement));
+                            Log.Information("ImportFile command received.");
+                            break;
+                        case "MigrateContent":
+                            _ = Task.Run(ContentMigrationService.HandleMigrateContent);
+                            Log.Information("MigrateContent command received.");
+                            break;
+                        case "StorageWarningConfirm":
+                            root.TryGetProperty("Parameters", out JsonElement storageWarningParameterElement);
+                            _ = Task.Run(() => StorageWarningService.HandleStorageWarningConfirm(storageWarningParameterElement));
+                            Log.Information("StorageWarningConfirm command received.");
+                            break;
+                        case "RecoveryConfirm":
+                            root.TryGetProperty("Parameters", out JsonElement recoveryParameterElement);
+                            _ = Task.Run(() => RecoveryService.HandleRecoveryConfirm(recoveryParameterElement));
+                            Log.Information("RecoveryConfirm command received.");
+                            break;
+                        case "ApplyVideoPreset":
+                            if (root.TryGetProperty("Parameters", out var videoPresetParams) &&
+                                videoPresetParams.TryGetProperty("preset", out var videoPresetEl))
+                            {
+                                string? videoPreset = videoPresetEl.GetString();
+                                if (!string.IsNullOrEmpty(videoPreset))
+                                {
+                                    await PresetsService.ApplyVideoPreset(videoPreset);
+                                }
+                            }
+                            break;
+                        case "ApplyClipPreset":
+                            if (root.TryGetProperty("Parameters", out var clipPresetParams) &&
+                                clipPresetParams.TryGetProperty("preset", out var clipPresetEl))
+                            {
+                                string? clipPreset = clipPresetEl.GetString();
+                                if (!string.IsNullOrEmpty(clipPreset))
+                                {
+                                    await PresetsService.ApplyClipPreset(clipPreset);
+                                }
+                            }
+                            break;
+                        default:
+                            Log.Information($"Unknown method: {method}");
+                            break;
+                    }
+                }
+                else
+                {
+                    Log.Information("Method property not found in message.");
+                }
+            }
+            catch (JsonException ex)
+            {
+                Log.Error($"Failed to parse message as JSON: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Unhandled exception in message handler: {ex.Message}");
+                Log.Error($"Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        public static async Task HandleDeleteContent(JsonElement message)
+        {
+            Log.Information($"Handling DeleteContent with message: {message}");
+
+            if (message.TryGetProperty("Id", out JsonElement idElement))
+            {
+                string id = idElement.GetString()!;
+                Content? content = AppState.Instance.Content.FirstOrDefault(c => c.Id == id);
+
+                if (content != null && !string.IsNullOrEmpty(content.FilePath))
+                {
+                    await ContentService.DeleteContent(content.FilePath, content.Type, content.Id);
+                }
+                else
+                {
+                    Log.Warning($"Content not found in state for deletion: {id}");
+                }
+            }
+            else
+            {
+                Log.Information("Id property not found in DeleteContent message.");
+            }
+        }
+
+        public static async Task HandleDeleteMultipleContent(JsonElement message)
+        {
+            Log.Information($"Handling DeleteMultipleContent with message: {message}");
+
+            if (!message.TryGetProperty("Ids", out JsonElement idsElement))
+            {
+                Log.Information("Ids property not found in DeleteMultipleContent message.");
+                return;
+            }
+
+            // Use bulk update to prevent multiple frontend updates
+            Settings.Instance._isBulkUpdating = true;
+            try
+            {
+                foreach (var idElement in idsElement.EnumerateArray())
+                {
+                    string id = idElement.GetString()!;
+                    Content? content = AppState.Instance.Content.FirstOrDefault(c => c.Id == id);
+
+                    if (content != null && !string.IsNullOrEmpty(content.FilePath))
+                    {
+                        await ContentService.DeleteContent(content.FilePath, content.Type, content.Id, reloadState: false);
+                        Log.Information($"Deleted content: {content.FileName}");
+                    }
+                    else
+                    {
+                        Log.Warning($"Content not found in state for deletion: {id}");
+                    }
+                }
+            }
+            finally
+            {
+                Settings.Instance._isBulkUpdating = false;
+                // Reload content and send single update to frontend
+                await SettingsService.LoadContentFromFolderIntoState(true);
+            }
+        }
+
+        public static async Task StartWebsocket()
+        {
+            HttpListener listener = new HttpListener();
+            listener.Prefixes.Add("http://localhost:44030/");
+            listener.Start();
+            Log.Information("WebSocket server started at ws://localhost:44030/");
+
+            try
+            {
+                while (true)
+                {
+                    HttpListenerContext context = await listener.GetContextAsync();
+
+                    string? origin = context.Request.Headers["Origin"];
+                    if (context.Request.IsWebSocketRequest && origin != null && !Api.ContentServer.IsLocalOrigin(origin))
+                    {
+                        context.Response.StatusCode = 403;
+                        context.Response.Close();
+                    }
+                    else if (context.Request.IsWebSocketRequest)
+                    {
+                        Log.Information("Received WebSocket connection request");
+
+                        if (activeWebSocket != null && activeWebSocket.State == WebSocketState.Open)
+                        {
+                            await activeWebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "New connection", CancellationToken.None);
+                            Log.Information("Closed previous WebSocket connection.");
+                        }
+
+                        HttpListenerWebSocketContext wsContext = await context.AcceptWebSocketAsync(null);
+                        WebSocket socket = wsContext.WebSocket;
+                        SetActiveSocket(socket);
+
+                        Log.Information("WebSocket connection established");
+                        await HandleWebSocketAsync(socket);
+                    }
+                    else
+                    {
+                        Log.Information("Invalid request: Not a WebSocket request");
+                        context.Response.StatusCode = 400;
+                        context.Response.Close();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Information($"Exception in StartWebsocket: {ex.Message}");
+                if (ex.StackTrace != null)
+                {
+                    Log.Information(ex.StackTrace);
+                }
+            }
+        }
+
+        private static TaskCompletionSource NewConnectedSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private static WebSocket? GetOpenSocket()
+        {
+            lock (connectionGate)
+            {
+                return activeWebSocket?.State == WebSocketState.Open ? activeWebSocket : null;
+            }
+        }
+
+        private static void SetActiveSocket(WebSocket socket)
+        {
+            lock (connectionGate)
+            {
+                activeWebSocket = socket;
+                connectedSignal.TrySetResult();
+            }
+        }
+
+        private static void ClearActiveSocket(WebSocket socket)
+        {
+            lock (connectionGate)
+            {
+                if (!ReferenceEquals(activeWebSocket, socket))
+                    return;
+
+                activeWebSocket = null;
+                connectedSignal = NewConnectedSignal();
+            }
+        }
+
+        // All callers share one signal, so a burst of messages waits once rather than once each.
+        private static async Task<WebSocket?> WaitForConnectionAsync(int timeoutMs)
+        {
+            Task connected;
+            lock (connectionGate)
+            {
+                if (activeWebSocket?.State == WebSocketState.Open)
+                    return activeWebSocket;
+
+                connected = connectedSignal.Task;
+            }
+
+            try
+            {
+                await connected.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+            }
+            catch (TimeoutException)
+            {
+                return null;
+            }
+
+            return GetOpenSocket();
+        }
+
+        public static async Task SendFrontendMessage(string method, object content)
+        {
+            if (GetOpenSocket() == null)
+            {
+                if (ResentOnConnect.Contains(method))
+                {
+                    Log.Debug($"Skipped '{method}' message: no frontend connected, it is resent on the next connection");
+                    return;
+                }
+
+                if (await WaitForConnectionAsync(ConnectGraceMs) == null)
+                {
+                    Log.Warning($"Dropped '{method}' message: no frontend connected within {ConnectGraceMs / 1000}s");
+                    return;
+                }
+            }
+
+            byte[] buffer;
+            try
+            {
+                buffer = JsonSerializer.SerializeToUtf8Bytes(new { method, content }, jsonOptions);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error serializing '{method}' message: {ex.Message}");
+                return;
+            }
+
+            await sendLock.WaitAsync();
+            try
+            {
+                WebSocket? socket = GetOpenSocket();
+                if (socket == null)
+                {
+                    Log.Warning($"Dropped '{method}' message: frontend disconnected before it was sent");
+                    return;
+                }
+
+                await socket.SendAsync(
+                    buffer,
+                    WebSocketMessageType.Text,
+                    endOfMessage: true,
+                    cancellationToken: CancellationToken.None
+                );
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error sending '{method}' message: {ex.Message}");
+            }
+            finally
+            {
+                sendLock.Release();
+            }
+        }
+
+        public static async Task ShowModal(string title, string description, string type = "info", string? subtitle = null)
+        {
+            if (type != "info" && type != "warning" && type != "error")
+            {
+                Log.Warning($"Invalid modal type '{type}'. Defaulting to 'info'.");
+                type = "info";
+            }
+
+            if (GetOpenSocket() == null)
+            {
+                QueuePendingModal(new PendingModal(title, subtitle, description, type));
+
+                // A frontend may have connected in between; don't leave the modal waiting for the next one.
+                if (GetOpenSocket() != null)
+                    await FlushPendingModalsAsync();
+                return;
+            }
+
+            await SendFrontendMessage("ShowModal", new { title, subtitle, description, type });
+            Log.Information($"Sent modal to frontend: {title} ({type})");
+        }
+
+        private static void QueuePendingModal(PendingModal modal)
+        {
+            lock (pendingModals)
+            {
+                if (pendingModals.Any(m => m.Title == modal.Title && m.Description == modal.Description))
+                {
+                    Log.Information($"Modal '{modal.Title}' is already queued for the next frontend connection");
+                    return;
+                }
+
+                if (pendingModals.Count >= MaxPendingModals)
+                {
+                    Log.Warning($"Discarding oldest queued modal '{pendingModals[0].Title}' to stay within {MaxPendingModals} pending modals");
+                    pendingModals.RemoveAt(0);
+                }
+
+                pendingModals.Add(modal);
+                Log.Information($"No frontend connected; queued modal '{modal.Title}' ({modal.Type}) for the next connection");
+            }
+        }
+
+        private static async Task FlushPendingModalsAsync()
+        {
+            List<PendingModal> toSend;
+            lock (pendingModals)
+            {
+                if (pendingModals.Count == 0)
+                    return;
+
+                toSend = new List<PendingModal>(pendingModals);
+                pendingModals.Clear();
+            }
+
+            Log.Information($"Sending {toSend.Count} modal(s) queued while no frontend was connected");
+            foreach (var modal in toSend)
+            {
+                await SendFrontendMessage("ShowModal", new
+                {
+                    title = modal.Title,
+                    subtitle = modal.Subtitle,
+                    description = modal.Description,
+                    type = modal.Type
+                });
+            }
+        }
+
+        // Settings a recording reads when it starts; the frontend compares these to show pending changes
+        private static readonly string[] RecordingStartSettingKeys =
+        [
+            "recordingMode", "resolution", "frameRate", "rateControl", "bitrate", "minBitrate", "maxBitrate",
+            "crfValue", "cqLevel", "encoder", "codec", "stretch4By3", "enableHdr", "replayBufferDuration",
+            "replayBufferMaxSize", "inputDevices", "outputDevices", "forceMonoInputSources", "inputNoiseSuppression",
+            "enableSeparateAudioTracks", "audioOutputMode", "gameIntegrations"
+        ];
+
+        // Serialized exactly like the Settings message so the frontend can compare values directly
+        public static JsonObject GetRecordingStartSettings()
+        {
+            var settings = JsonSerializer.SerializeToNode(Settings.Instance, jsonOptions)!.AsObject();
+            var snapshot = new JsonObject();
+            foreach (var key in RecordingStartSettingKeys)
+            {
+                if (settings[key] is { } value)
+                    snapshot[key] = value.DeepClone();
+            }
+            return snapshot;
+        }
+
+        public static async Task SendSettingsToFrontend(string cause)
+        {
+            if (!Program.hasLoadedInitialSettings || Settings.Instance._isBulkUpdating)
+                return;
+
+            Log.Information("Sending settings to frontend ({Cause})", cause);
+            await SendFrontendMessage("Settings", Settings.Instance);
+        }
+
+        // One push in flight at a time; changes made meanwhile are folded into the next push.
+        // The returned task completes once a push that includes this change has been sent.
+        public static Task SendStateToFrontend(string cause)
+        {
+            if (!Program.hasLoadedInitialSettings || Settings.Instance._isBulkUpdating)
+                return Task.CompletedTask;
+
+            Log.Information("Sending state to frontend ({Cause})", cause);
+
+            lock (stateSendGate)
+            {
+                stateDirty = true;
+                if (!statePumpRunning)
+                {
+                    statePumpRunning = true;
+                    statePump = Task.Run(PumpStateAsync);
+                }
+
+                return statePump;
+            }
+        }
+
+        private static async Task PumpStateAsync()
+        {
+            while (true)
+            {
+                lock (stateSendGate)
+                {
+                    stateDirty = false;
+                }
+
+                await SendFrontendMessage("State", AppState.Instance);
+
+                lock (stateSendGate)
+                {
+                    if (stateDirty)
+                        continue;
+
+                    statePumpRunning = false;
+                    return;
+                }
+            }
+        }
+
+        public static async Task SendGameList()
+        {
+            try
+            {
+                var gameList = GameUtils.GetGameList();
+                await SendFrontendMessage("GameList", gameList);
+                Log.Information("Sent game list to frontend ({Count} games)", gameList.Count);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error sending game list to frontend");
+                await SendFrontendMessage("GameList", new List<object>());
+            }
+        }
+
+        private static async Task HandleCreateAiClip(JsonElement message)
+        {
+            Log.Information($"{message}");
+            message.TryGetProperty("Id", out JsonElement idElement);
+            await AiService.CreateHighlight(idElement.GetString()!);
+        }
+
+        private static async Task HandleCompressVideo(JsonElement message)
+        {
+            Log.Information($"CompressVideo: {message}");
+
+            if (message.TryGetProperty("Id", out JsonElement idElement))
+            {
+                string id = idElement.GetString()!;
+                Content? content = AppState.Instance.Content.FirstOrDefault(c => c.Id == id);
+
+                if (content != null)
+                {
+                    await CompressionService.CompressVideo(content);
+                }
+                else
+                {
+                    Log.Warning($"Content not found in state for compression: {id}");
+                }
+            }
+            else
+            {
+                Log.Error("Id property not found in CompressVideo message.");
+            }
+        }
+
+        private static async Task HandleCreateClip(JsonElement message)
+        {
+            Log.Information($"{message}");
+
+            if (message.TryGetProperty("Segments", out JsonElement segmentsElement))
+            {
+                var segments = new List<Segment>();
+                foreach (var segmentElement in segmentsElement.EnumerateArray())
+                {
+                    if (segmentElement.TryGetProperty("id", out JsonElement idElement) &&
+                        segmentElement.TryGetProperty("contentId", out JsonElement contentIdElement) &&
+                        segmentElement.TryGetProperty("startTime", out JsonElement startTimeElement) &&
+                        segmentElement.TryGetProperty("endTime", out JsonElement endTimeElement))
+                    {
+                        long id = idElement.GetInt64();
+                        string contentId = contentIdElement.GetString()!;
+                        double startTime = startTimeElement.GetDouble();
+                        double endTime = endTimeElement.GetDouble();
+
+                        Content? content = AppState.Instance.Content.FirstOrDefault(c => c.Id == contentId);
+
+                        if (content == null)
+                        {
+                            Log.Warning($"Content not found in state for segment: {contentId}");
+                            continue;
+                        }
+
+                        List<int>? mutedAudioTracks = null;
+                        if (segmentElement.TryGetProperty("mutedAudioTracks", out JsonElement mutedEl)
+                            && mutedEl.ValueKind == JsonValueKind.Array)
+                        {
+                            mutedAudioTracks = mutedEl.EnumerateArray().Select(e => e.GetInt32()).ToList();
+                        }
+                        Dictionary<int, double>? audioTrackVolumes = null;
+                        if (segmentElement.TryGetProperty("audioTrackVolumes", out JsonElement volEl)
+                            && volEl.ValueKind == JsonValueKind.Object)
+                        {
+                            audioTrackVolumes = new Dictionary<int, double>();
+                            foreach (var prop in volEl.EnumerateObject())
+                            {
+                                if (int.TryParse(prop.Name, out int trackIdx) && prop.Value.TryGetDouble(out double vol))
+                                    audioTrackVolumes[trackIdx] = vol;
+                            }
+                        }
+
+                        segments.Add(new Segment
+                        {
+                            Id = id,
+                            Type = content.Type.ToString(),
+                            ContentId = content.Id,
+                            StartTime = startTime,
+                            EndTime = endTime,
+                            FileName = content.FileName,
+                            FilePath = content.FilePath,
+                            Game = content.Game,
+                            Title = content.Title,
+                            IgdbId = content.IgdbId,
+                            MutedAudioTracks = mutedAudioTracks,
+                            AudioTrackVolumes = audioTrackVolumes
+                        });
+                    }
+                }
+
+                bool createSeparateClips = message.TryGetProperty("OutputMode", out JsonElement outputModeElement)
+                    && string.Equals(outputModeElement.GetString(), "separate", StringComparison.OrdinalIgnoreCase);
+
+                await ClipService.CreateClips(segments, createSeparateClips);
+            }
+            else
+            {
+                Log.Information("Segments property not found in CreateClip message.");
+            }
+        }
+
+        // Joins whole videos, in the given order, into a new session (sessions) or a new clip (the rest)
+        private static async Task HandleMergeContent(JsonElement message)
+        {
+            Log.Information($"MergeContent: {message}");
+
+            List<string> ids = ReadIds(message);
+            List<Content> contents = FindContents(ids);
+            if (contents.Count != ids.Count)
+            {
+                Log.Warning($"{ids.Count - contents.Count} of the videos to merge were not found in state");
+            }
+
+            if (contents.Count > 0 && contents.All(c => c.Type == Content.ContentType.Session))
+            {
+                await ClipService.MergeSessions(contents);
+                return;
+            }
+
+            var segments = contents.Select((content, i) => new Segment
+            {
+                Id = i,
+                Type = content.Type.ToString(),
+                ContentId = content.Id,
+                StartTime = 0,
+                EndTime = content.Duration.TotalSeconds,
+                FileName = content.FileName,
+                FilePath = content.FilePath,
+                Game = content.Game,
+                IgdbId = content.IgdbId
+            }).ToList();
+
+            await ClipService.CreateClips(segments, copyMatchingVideo: true);
+        }
+
+        // Tells the frontend whether merging the selected videos would have to re-encode them
+        private static async Task HandleCheckMerge(JsonElement message)
+        {
+            List<string> ids = ReadIds(message);
+            List<Content> contents = FindContents(ids);
+            bool fast = contents.Count == ids.Count && await ClipService.CanMergeWithoutReencoding(contents);
+            await SendFrontendMessage("MergeCheck", new { ids, fast });
+        }
+
+        private static List<string> ReadIds(JsonElement message) =>
+            message.ValueKind == JsonValueKind.Object &&
+            message.TryGetProperty("Ids", out JsonElement idsElement) &&
+            idsElement.ValueKind == JsonValueKind.Array
+                ? idsElement.EnumerateArray().Select(e => e.GetString()).OfType<string>().ToList()
+                : [];
+
+        private static List<Content> FindContents(List<string> ids) =>
+            ids.Select(id => AppState.Instance.Content.FirstOrDefault(c => c.Id == id)).OfType<Content>().ToList();
+
+        private static async Task SetVideoLocationAsync()
+        {
+            string? picked = await PlatformServices.Dialogs.PickFolderAsync("Select a folder to set as the video location.");
+            if (picked != null)
+            {
+                string selectedPath = Shared.PathUtils.Normalize(picked);
+                Log.Information($"Selected Folder: {selectedPath}");
+
+                // Check if the new folder would exceed storage limit
+                bool shouldProceed = await StorageWarningService.CheckContentFolderChange(selectedPath);
+                if (shouldProceed)
+                {
+                    Settings.Instance.ContentFolder = selectedPath;
+
+                    // Push the updated path to the frontend so the settings UI reflects the change
+                    await SendSettingsToFrontend("Content folder changed");
+                }
+                // If not proceeding, a warning modal was sent to the frontend
+            }
+            else
+            {
+                Log.Information("Folder selection was canceled.");
+            }
+        }
+
+        private static async Task SetCacheLocationAsync()
+        {
+            string? picked = await PlatformServices.Dialogs.PickFolderAsync("Select a folder for metadata, thumbnails, and waveforms.");
+            if (picked != null)
+            {
+                string selectedPath = Shared.PathUtils.Normalize(picked);
+                string oldCacheFolder = Settings.Instance.CacheFolder;
+                Log.Information($"Selected Cache Folder: {selectedPath}");
+
+                Settings.Instance.CacheFolder = selectedPath;
+                SettingsService.SaveSettings();
+
+                await SettingsService.MigrateCacheFolder(oldCacheFolder, selectedPath);
+
+                await SendSettingsToFrontend("Cache folder changed");
+            }
+            else
+            {
+                Log.Information("Cache folder selection was canceled.");
+            }
+        }
+
+        private static async Task HandleWebSocketAsync(WebSocket webSocket)
+        {
+            byte[] buffer = new byte[4096];
+            try
+            {
+                while (webSocket.State == WebSocketState.Open)
+                {
+                    WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Log.Information("Client initiated WebSocket closure.");
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client initiated closure", CancellationToken.None);
+                    }
+                    else
+                    {
+                        string receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        await HandleMessage(receivedMessage);
+                    }
+                }
+            }
+            catch (WebSocketException wsEx)
+            {
+                Log.Information($"WebSocketException in HandleWebSocketAsync: {wsEx.Message}");
+                Log.Information($"WebSocket state at exception: {webSocket.State}");
+                if (wsEx.InnerException != null)
+                {
+                    Log.Information($"Inner exception: {wsEx.InnerException.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Information($"General exception in HandleWebSocketAsync: {ex.Message}");
+            }
+            finally
+            {
+                ClearActiveSocket(webSocket);
+                if (webSocket.State != WebSocketState.Closed && webSocket.State != WebSocketState.Aborted)
+                {
+                    await webSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Server-side error", CancellationToken.None);
+                }
+                Log.Information("WebSocket connection closed.");
+            }
+        }
+
+        private static async Task HandleSelectGameExecutable()
+        {
+            try
+            {
+                string? pickedFile = await PlatformServices.Dialogs.PickFileAsync("Select Game Executable", "Executable Files (*.exe)", "exe");
+
+                if (pickedFile != null)
+                {
+                    string filePath = Shared.PathUtils.Normalize(pickedFile);
+                    string fileName = Path.GetFileNameWithoutExtension(filePath);
+
+                    // If the selected exe is a known catalog game, link it (catalog name + igdb id + CDN
+                    // icon) so it behaves exactly like adding from search; otherwise treat it as a custom
+                    // game and extract the exe's own icon.
+                    string? catalogName = GameUtils.GetGameNameFromExePath(pickedFile);
+                    int? igdbId = GameUtils.GetIgdbIdFromExePath(pickedFile);
+                    string? catalogIcon = GameUtils.GetIconFromExePath(pickedFile);
+                    // Fall back to the exe's own icon whenever the catalog has no icon for it (even for a
+                    // known game), so the entry always has the best icon available.
+                    string? customIcon = catalogIcon == null
+                        ? Shared.IconUtils.ExtractExeIconBase64(pickedFile)
+                        : null;
+
+                    var gameObject = new
+                    {
+                        name = catalogName ?? fileName,
+                        paths = new[] { filePath },
+                        igdbId,
+                        icon = catalogIcon,
+                        customIcon
+                    };
+
+                    await SendFrontendMessage("SelectedGameExecutable", gameObject);
+                    Log.Information($"Selected game executable: {filePath}{(catalogName != null ? $" (matched catalog game '{catalogName}')" : "")}");
+                }
+                else
+                {
+                    await SendFrontendMessage("SelectedGameExecutable", new { paths = Array.Empty<string>() });
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error selecting game executable: {ex.Message}");
+                await SendFrontendMessage("SelectedGameExecutable", new { paths = Array.Empty<string>() });
+                await ShowModal("Error", $"Failed to select game executable: {ex.Message}", "error");
+            }
+        }
+    }
+}
