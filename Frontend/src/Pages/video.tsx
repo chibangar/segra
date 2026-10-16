@@ -13,7 +13,7 @@ import { useModal } from '../Context/ModalContext';
 import UploadModal from '../Components/UploadModal';
 import type { LucideIcon, LucideProps } from 'lucide-react';
 import { Icon } from 'lucide-react';
-import { crosshair2Dot, soccerBall } from '@lucide/lab';
+import { soccerBall } from '@lucide/lab';
 import {
   Trash2,
   Settings,
@@ -49,9 +49,22 @@ import AudioTrackIcon from '../Components/AudioTrackIcon';
 import HevcExtensionWarning from '../Components/HevcExtensionWarning';
 import { useI18n } from '../Context/I18nContext';
 
-const Crosshair2Dot = React.forwardRef<SVGSVGElement, LucideProps>((props, ref) => (
-  <Icon {...props} ref={ref} iconNode={crosshair2Dot} />
-)) as LucideIcon;
+const GunIcon = React.forwardRef<SVGSVGElement, LucideProps>(
+  ({ size = 24, className = '', ...props }, ref) => (
+    <svg
+      ref={ref}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="none"
+      className={className}
+      {...props}
+    >
+      <path d="M3 8.5h5V7.5a.5.5 0 0 1 .5-.5h12a.5.5 0 0 1 .5.5v3.5a1.5 1.5 0 0 1-1.5 1.5H16.2l1.6 7.2a1 1 0 0 1-.98 1.22H13.2a1 1 0 0 1-.97-.77L10.3 14H8.5a.5.5 0 0 1-.5-.5V11H3a.5.5 0 0 1-.5-.5v-1.5a.5.5 0 0 1 .5-.5zm10 4h1.7l-.35-1.5H13v1.5z" />
+    </svg>
+  ),
+) as LucideIcon;
 
 const SoccerBall = React.forwardRef<SVGSVGElement, LucideProps>((props, ref) => (
   <Icon {...props} ref={ref} iconNode={soccerBall} />
@@ -108,7 +121,7 @@ const formatPlaybackRateLabel = (rate: number) => `${rate}x`;
 
 const DEFAULT_ICON_MAPPING: Record<BookmarkType, LucideIcon> = {
   Manual: BookmarkIcon,
-  Kill: Crosshair2Dot,
+  Kill: GunIcon,
   Goal: SoccerBall,
   Assist: HeartHandshake,
   Death: Skull,
@@ -1771,11 +1784,13 @@ export default function VideoComponent({ video }: { video: Content }) {
       BookmarkType.Death,
       BookmarkType.Manual,
     ];
-    return order.filter((type) => video.bookmarks.some((b) => b.type === type));
+    const bms = video.bookmarks || [];
+    return order.filter((type) => bms.some((b) => b.type === type));
   }, [video.bookmarks]);
 
   const filteredBookmarks = useMemo(() => {
-    return video.bookmarks.filter((bookmark) => selectedBookmarkTypes.has(bookmark.type));
+    const bms = video.bookmarks || [];
+    return bms.filter((bookmark) => selectedBookmarkTypes.has(bookmark.type));
   }, [video.bookmarks, selectedBookmarkTypes]);
 
   const toggleBookmarkType = (type: BookmarkType) => {
