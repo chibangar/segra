@@ -1210,6 +1210,20 @@ namespace Segra.Backend.Core.Models
             }
             AppState.Instance.NotifyRecordingUpdated();
             BookmarkAdded?.Invoke(bookmark);
+#if WINDOWS
+            try
+            {
+                if (bookmark.Type != BookmarkType.Death)
+                {
+                    string gameName = Game;
+                    Windows.Display.InGameNotificationService.ShowEvent(bookmark.Type, bookmark.Subtype, gameName);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to show in-game notification: {ex.Message}");
+            }
+#endif
         }
 
         public List<Bookmark> GetBookmarks()

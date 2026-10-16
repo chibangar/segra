@@ -110,9 +110,9 @@ export const ptPT: Translations = {
       confirmBeforeDeleting: 'Confirmar Antes de Eliminar',
       confirmBeforeDeletingDesc:
         'Pede confirmação antes de eliminar vídeos, gravações recuperadas ou caminhos de jogos.',
-      showInGameNotifications: 'Notificações no Jogo (Clips)',
+      showInGameNotifications: 'Notificações no Jogo (Kills e Clips)',
       showInGameNotificationsDesc:
-        'Apresenta uma notificação no ecrã durante o jogo ao guardar clips ou marcadores (estilo Medal).',
+        'Apresenta uma notificação no ecrã durante o jogo ao fazer kills, headshots ou guardar clips (estilo Medal).',
     },
     captureMode: {
       title: 'Modo de Gravação',

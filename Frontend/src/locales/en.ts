@@ -106,9 +106,9 @@ export const en = {
       confirmBeforeDeleting: 'Confirm Before Deleting',
       confirmBeforeDeletingDesc:
         'Asks before videos, recovered recordings or game paths are deleted.',
-      showInGameNotifications: 'In-Game Clip Notifications',
+      showInGameNotifications: 'In-Game Notifications (Kills & Clips)',
       showInGameNotificationsDesc:
-        'Shows an on-screen notification in-game when saving clips or bookmarks (like Medal).',
+        'Shows an on-screen HUD notification in-game when getting kills, headshots, or saving clips (Medal style).',
     },
     captureMode: {
       title: 'Capture Mode',

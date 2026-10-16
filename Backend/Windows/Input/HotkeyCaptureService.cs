@@ -349,9 +349,6 @@ namespace Segra.Backend.Windows.Input
                         recording.AddBookmark(bookmark);
                         Task.Run(PlayBookmarkSound);
                         _ = MessageService.SendFrontendMessage("BookmarkCreated", new { });
-#if WINDOWS
-                        Display.InGameNotificationService.ShowBookmark(recording.Game);
-#endif
                     }
                     break;
 

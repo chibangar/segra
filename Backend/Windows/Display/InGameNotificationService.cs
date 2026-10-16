@@ -8,18 +8,24 @@ using System.Windows.Forms;
 using Segra.Backend.Core.Models;
 using Serilog;
 
+using Segra.Backend.Platform;
+
 namespace Segra.Backend.Windows.Display
 {
     public enum InGameNotificationType
     {
         Clipping,
         ClipSaved,
-        Bookmark
+        Bookmark,
+        Kill,
+        Headshot,
+        Goal,
+        Assist
     }
 
     /// <summary>
     /// Displays a non-intrusive, click-through, topmost in-game notification overlay (similar to Medal.tv / Shadowplay)
-    /// when saving clips, bookmarks, or replay buffers. Never takes focus from fullscreen or windowed games.
+    /// when saving clips, bookmarks, kills, or replay buffers. Never takes focus from fullscreen or windowed games.
     /// </summary>
     public static class InGameNotificationService
     {
@@ -70,6 +76,37 @@ namespace Segra.Backend.Windows.Display
             ShowNotification(title, subtitle, InGameNotificationType.ClipSaved);
         }
 
+        public static void ShowKill(string? gameName, bool isHeadshot = false)
+        {
+            bool isPt = IsPortuguese();
+            string title = isHeadshot ? "HEADSHOT!" : (isPt ? "KILL REGISTADA!" : "KILL RECORDED!");
+            string subtitle = !string.IsNullOrWhiteSpace(gameName) ? gameName : (isPt ? "Momento de Destaque" : "Highlight Saved");
+            ShowNotification(title, subtitle, isHeadshot ? InGameNotificationType.Headshot : InGameNotificationType.Kill);
+            PlaySound();
+        }
+
+        public static void ShowEvent(BookmarkType type, BookmarkSubtype? subtype, string? gameName)
+        {
+            bool isPt = IsPortuguese();
+            switch (type)
+            {
+                case BookmarkType.Kill:
+                    ShowKill(gameName, subtype == BookmarkSubtype.Headshot);
+                    break;
+                case BookmarkType.Goal:
+                    ShowNotification(isPt ? "GOLO!" : "GOAL!", gameName ?? "", InGameNotificationType.Goal);
+                    PlaySound();
+                    break;
+                case BookmarkType.Assist:
+                    ShowNotification(isPt ? "ASSISTÊNCIA!" : "ASSIST!", gameName ?? "", InGameNotificationType.Assist);
+                    PlaySound();
+                    break;
+                case BookmarkType.Manual:
+                    ShowBookmark(gameName);
+                    break;
+            }
+        }
+
         public static void ShowBookmark(string? gameName, string? momentType = null)
         {
             bool isPt = IsPortuguese();
@@ -78,6 +115,18 @@ namespace Segra.Backend.Windows.Display
                 ? momentType
                 : (!string.IsNullOrWhiteSpace(gameName) ? gameName : (isPt ? "Momento Marcado" : "Bookmark Saved"));
             ShowNotification(title, subtitle, InGameNotificationType.Bookmark);
+        }
+
+        private static void PlaySound()
+        {
+            try
+            {
+                if (Settings.Instance.SoundEffectsVolume > 0)
+                {
+                    PlatformServices.Sound.Play(Properties.Resources.bookmark, Settings.Instance.SoundEffectsVolume);
+                }
+            }
+            catch { }
         }
 
         private static bool IsPortuguese()
@@ -266,6 +315,10 @@ namespace Segra.Backend.Windows.Display
                     InGameNotificationType.Clipping => Color.FromArgb(56, 189, 248),   // Cyan / Sky-400
                     InGameNotificationType.ClipSaved => Color.FromArgb(34, 197, 94),   // Emerald / Green-500
                     InGameNotificationType.Bookmark => Color.FromArgb(245, 158, 11),   // Amber-500
+                    InGameNotificationType.Kill => Color.FromArgb(239, 68, 68),       // Red / Rose-500
+                    InGameNotificationType.Headshot => Color.FromArgb(249, 115, 22),   // Orange-500
+                    InGameNotificationType.Goal => Color.FromArgb(234, 179, 8),       // Yellow-500
+                    InGameNotificationType.Assist => Color.FromArgb(168, 85, 247),     // Purple-500
                     _ => Color.FromArgb(56, 189, 248)
                 };
 
