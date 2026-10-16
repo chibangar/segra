@@ -114,6 +114,16 @@ export default function RecoveryModal({ files, onClose }: RecoveryModalProps) {
     }
   };
 
+  const handleClose = () => {
+    remainingFiles.forEach((file) => {
+      sendMessageToBackend('RecoveryConfirm', {
+        recoveryId: file.recoveryId,
+        action: 'skip',
+      });
+    });
+    onClose();
+  };
+
   const goToPrevious = () => {
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
@@ -169,7 +179,7 @@ export default function RecoveryModal({ files, onClose }: RecoveryModalProps) {
           size="sm"
           icon
           className="absolute right-4 top-4 z-10"
-          onClick={onClose}
+          onClick={handleClose}
           aria-label={t('common.close')}
         >
           ✕

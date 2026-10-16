@@ -103,7 +103,16 @@ export function GeneralMessagesProvider({ children }: { children: ReactNode }) {
   };
 
   const openRecoveryPromptModal = (recoveryData: RecoveryPromptMessage) => {
-    openModal(<RecoveryModal files={recoveryData.files} onClose={closeModal} />);
+    openModal(<RecoveryModal files={recoveryData.files} onClose={closeModal} />, {
+      onDismiss: () => {
+        recoveryData.files.forEach((file) => {
+          sendMessageToBackend('RecoveryConfirm', {
+            recoveryId: file.recoveryId,
+            action: 'skip',
+          });
+        });
+      },
+    });
   };
 
   return (

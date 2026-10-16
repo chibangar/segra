@@ -13,6 +13,83 @@ namespace Segra.Backend.Recorder
     {
         private static readonly Dictionary<string, OrphanedFile> _pendingRecoveries = new();
         private static readonly Dictionary<string, string> _detectedGames = new();
+        private static readonly object _ignoredFilesLock = new();
+        private static HashSet<string>? _ignoredFiles;
+
+        private static string IgnoredFilesPath => PathUtils.Combine(FolderNames.CacheFolder, "ignored_recoveries.json");
+
+        private static HashSet<string> GetIgnoredFiles()
+        {
+            lock (_ignoredFilesLock)
+            {
+                if (_ignoredFiles != null)
+                    return _ignoredFiles;
+
+                _ignoredFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    string path = IgnoredFilesPath;
+                    if (File.Exists(path))
+                    {
+                        var list = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(path));
+                        if (list != null)
+                        {
+                            foreach (var item in list)
+                            {
+                                if (!string.IsNullOrWhiteSpace(item))
+                                    _ignoredFiles.Add(PathUtils.Normalize(item));
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Failed to load ignored recoveries: {ex.Message}");
+                }
+                return _ignoredFiles;
+            }
+        }
+
+        private static void AddIgnoredFile(string filePath)
+        {
+            lock (_ignoredFilesLock)
+            {
+                var ignored = GetIgnoredFiles();
+                string normalized = PathUtils.Normalize(filePath);
+                if (ignored.Add(normalized))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(FolderNames.CacheFolder);
+                        File.WriteAllText(IgnoredFilesPath, JsonSerializer.Serialize(ignored.ToList(), new JsonSerializerOptions { WriteIndented = true }));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Failed to save ignored recoveries: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        private static void RemoveIgnoredFile(string filePath)
+        {
+            lock (_ignoredFilesLock)
+            {
+                var ignored = GetIgnoredFiles();
+                string normalized = PathUtils.Normalize(filePath);
+                if (ignored.Remove(normalized))
+                {
+                    try
+                    {
+                        File.WriteAllText(IgnoredFilesPath, JsonSerializer.Serialize(ignored.ToList(), new JsonSerializerOptions { WriteIndented = true }));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Failed to save ignored recoveries: {ex.Message}");
+                    }
+                }
+            }
+        }
 
         public static async Task CheckForOrphanedFilesAsync()
         {
@@ -113,15 +190,18 @@ namespace Segra.Backend.Recorder
                 switch (action)
                 {
                     case "recover":
+                        RemoveIgnoredFile(orphanedFile.FilePath);
                         string? gameName = string.IsNullOrEmpty(gameOverride) ? detectedGame : gameOverride;
                         await RecoverFile(orphanedFile, gameName);
                         await SettingsService.LoadContentFromFolderIntoState(true);
                         break;
                     case "delete":
+                        RemoveIgnoredFile(orphanedFile.FilePath);
                         DeleteFile(orphanedFile);
                         break;
                     case "skip":
-                        Log.Information($"User skipped recovery for: {orphanedFile.FileName}");
+                        AddIgnoredFile(orphanedFile.FilePath);
+                        Log.Information($"User skipped recovery for: {orphanedFile.FileName}. Added to ignored recoveries.");
                         break;
                 }
             }
@@ -135,6 +215,7 @@ namespace Segra.Backend.Recorder
         {
             var orphanedFiles = new List<OrphanedFile>();
             string contentFolder = Settings.Instance.ContentFolder;
+            var ignoredPaths = GetIgnoredFiles();
 
             // Build a lookup from sanitized folder name -> original game name
             var knownGameNames = AppState.Instance.Content
@@ -175,7 +256,11 @@ namespace Segra.Backend.Recorder
 
                 foreach (var videoFile in videoFiles)
                 {
-                    if (!trackedPaths.Contains(PathUtils.Normalize(videoFile)))
+                    string normalized = PathUtils.Normalize(videoFile);
+                    if (ignoredPaths.Contains(normalized))
+                        continue;
+
+                    if (!trackedPaths.Contains(normalized))
                     {
                         // Detect game from parent folder name (e.g., "Full Sessions/PUBG/video.mp4" -> "PUBG")
                         string? folderGame = null;
