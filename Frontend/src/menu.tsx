@@ -26,6 +26,7 @@ import {
   Monitor,
   Play,
   LucideIcon,
+  Languages,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useRef, useEffect, useLayoutEffect, useState, useMemo } from 'react';
@@ -47,7 +48,7 @@ const MENU_ICONS: Record<MenuItemId, LucideIcon> = {
 };
 
 export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
-  const { t } = useI18n();
+  const { t, language, setLanguage } = useI18n();
   const settings = useSettings();
   const appState = useAppState();
   const { hasLoadedObs, recording, preRecording, alwaysOnBufferActive } = appState;
@@ -266,6 +267,26 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
             );
           })}
         </AnimatePresence>
+
+        {/* Quick Language Switcher right below Settings */}
+        <div className="pt-2 mt-1 border-t border-base-400/50">
+          <Button
+            variant="nav"
+            className="flex items-center justify-between text-gray-300 hover:text-primary transition-colors cursor-pointer"
+            onClick={() => setLanguage(language === 'pt-PT' ? 'en' : 'pt-PT')}
+            title={language === 'pt-PT' ? 'Mudar para Inglês' : 'Mudar para Português'}
+          >
+            <div className="flex items-center gap-2 truncate">
+              <Languages className="w-5 h-5 text-primary shrink-0" />
+              <span className="text-sm font-medium truncate">
+                {language === 'pt-PT' ? 'Português' : 'English'}
+              </span>
+            </div>
+            <span className="badge badge-sm badge-outline text-xs text-primary border-primary shrink-0">
+              {language === 'pt-PT' ? 'PT' : 'EN'}
+            </span>
+          </Button>
+        </div>
       </div>
 
       {/* Status Cards */}

@@ -45,10 +45,6 @@ function getDefaultLanguage(): Language {
     if (saved && (saved === 'en' || saved === 'pt-PT')) {
       return saved;
     }
-    const navLang = (navigator.language || '').toLowerCase();
-    if (navLang.startsWith('en')) {
-      return 'en';
-    }
   } catch {
     // Ignore storage errors
   }
