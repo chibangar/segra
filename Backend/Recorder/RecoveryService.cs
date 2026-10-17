@@ -112,56 +112,43 @@ namespace Segra.Backend.Recorder
                 if (orphanedFiles.Count == 0)
                     return;
 
-                Log.Information($"Found {orphanedFiles.Count} orphaned video file(s) without metadata");
+                Log.Information($"Found {orphanedFiles.Count} orphaned video file(s) without metadata. Performing automatic background recovery...");
 
+                bool recoveredAny = false;
                 foreach (var orphanedFile in orphanedFiles)
                 {
-                    orphanedFile.Embedded = await EmbeddedMetadataService.ReadAsync(orphanedFile.FilePath);
+                    try
+                    {
+                        FileInfo fileInfo = new(orphanedFile.FilePath);
+                        // Clean up 0-byte or broken stubs smaller than 512KB from aborted launches
+                        if (fileInfo.Length < 512 * 1024)
+                        {
+                            Log.Information($"Removing empty or aborted recording stub ({fileInfo.Length} bytes): {orphanedFile.FileName}");
+                            DeleteFile(orphanedFile);
+                            continue;
+                        }
+
+                        orphanedFile.Embedded = await EmbeddedMetadataService.ReadAsync(orphanedFile.FilePath);
+                        string? detectedGame = !string.IsNullOrEmpty(orphanedFile.Embedded?.Game)
+                            ? orphanedFile.Embedded.Game
+                            : orphanedFile.FolderGame;
+
+                        Log.Information($"Silently recovering orphaned video: {orphanedFile.FileName} (Game: {detectedGame ?? "Unknown"})");
+                        await RecoverFile(orphanedFile, detectedGame);
+                        recoveredAny = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Could not auto-recover {orphanedFile.FileName}: {ex.Message}");
+                        AddIgnoredFile(orphanedFile.FilePath);
+                    }
                 }
 
-                var fileDataList = orphanedFiles.Select(orphanedFile =>
+                if (recoveredAny)
                 {
-                    string recoveryId = Guid.NewGuid().ToString();
-                    _pendingRecoveries[recoveryId] = orphanedFile;
-
-                    FileInfo fileInfo = new(orphanedFile.FilePath);
-                    double fileSizeMB = fileInfo.Length / (1024.0 * 1024.0);
-                    string formattedSize = fileSizeMB >= 1024
-                        ? $"{fileSizeMB / 1024.0:F2} GB"
-                        : $"{fileSizeMB:F2} MB";
-
-                    string typeLabel = orphanedFile.Type switch
-                    {
-                        Content.ContentType.Session => "Session Recording",
-                        Content.ContentType.Clip => "Clip",
-                        Content.ContentType.Highlight => "Highlight",
-                        Content.ContentType.Buffer => "Replay Buffer",
-                        _ => orphanedFile.Type.ToString()
-                    };
-
-                    string? detectedGame = !string.IsNullOrEmpty(orphanedFile.Embedded?.Game) ? orphanedFile.Embedded.Game : orphanedFile.FolderGame;
-                    if (!string.IsNullOrEmpty(detectedGame))
-                    {
-                        _detectedGames[recoveryId] = detectedGame;
-                    }
-
-                    return new
-                    {
-                        recoveryId,
-                        fileName = orphanedFile.FileName,
-                        filePath = orphanedFile.FilePath,
-                        type = orphanedFile.Type.ToString(),
-                        typeLabel,
-                        fileSize = formattedSize,
-                        detectedGame
-                    };
-                }).ToList();
-
-                await MessageService.SendFrontendMessage("RecoveryPrompt", new
-                {
-                    files = fileDataList,
-                    totalCount = fileDataList.Count
-                });
+                    await SettingsService.LoadContentFromFolderIntoState(true);
+                    Log.Information("Orphaned files auto-recovery completed and content refreshed.");
+                }
             }
             catch (Exception ex)
             {
