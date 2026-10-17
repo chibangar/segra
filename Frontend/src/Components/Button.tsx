@@ -27,13 +27,13 @@ const variantStyles: Record<ButtonVariant, string> = {
     'btn btn-secondary border-base-400 hover:border-base-400 hover:text-primary hover:border-opacity-75 text-gray-300',
   ghost: 'btn btn-ghost text-gray-300 hover:bg-white/10',
   nav: 'btn btn-secondary w-full justify-start border-base-400 hover:border-base-400 hover:text-primary hover:border-opacity-75 py-3 text-gray-300',
-  menu: 'flex w-full items-center gap-2 px-4 py-3 text-white hover:bg-white/10 active:bg-white/20 rounded-lg transition-all duration-200 hover:pl-5 outline-none',
+  menu: 'flex w-full items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:text-white hover:bg-white/10 active:bg-white/15 rounded-lg transition-all duration-150 outline-none',
   menuPrimary:
-    'flex w-full items-center gap-2 px-4 py-3 text-primary hover:bg-primary/10 active:bg-primary/20 rounded-lg transition-all duration-200 hover:pl-5 outline-none',
+    'flex w-full items-center gap-2.5 px-3 py-2 text-sm text-primary hover:bg-primary/10 active:bg-primary/20 rounded-lg transition-all duration-150 outline-none',
   menuDanger:
-    'flex w-full items-center gap-2 px-4 py-3 text-error hover:bg-error/10 active:bg-error/20 rounded-lg transition-all duration-200 hover:pl-5 outline-none',
+    'flex w-full items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 active:bg-red-500/20 rounded-lg transition-all duration-150 outline-none',
   menuPurple:
-    'flex w-full items-center gap-2 px-4 py-3 text-purple-400 hover:bg-purple-500/10 active:bg-purple-500/20 rounded-lg transition-all duration-200 hover:pl-5 outline-none',
+    'flex w-full items-center gap-2.5 px-3 py-2 text-sm text-purple-400 hover:bg-purple-500/10 active:bg-purple-500/20 rounded-lg transition-all duration-150 outline-none',
   danger: 'btn btn-ghost bg-error/20 hover:bg-error/10 text-error border-error',
   success: 'btn btn-ghost bg-primary/20 hover:bg-primary/10 text-primary border-primary',
 };
@@ -47,10 +47,10 @@ const sizeStyles: Record<ButtonSize, string> = {
 
 // Menu variants don't use DaisyUI btn sizes, they use padding
 const menuSizeStyles: Record<ButtonSize, string> = {
-  xs: 'px-2 py-1.5 text-xs',
-  sm: 'px-3 py-2 text-sm',
-  md: 'px-4 py-3',
-  lg: 'px-5 py-4 text-lg',
+  xs: 'px-2 py-1 text-xs',
+  sm: 'px-2.5 py-1.5 text-xs',
+  md: 'px-3 py-2 text-sm',
+  lg: 'px-4 py-2.5 text-base',
 };
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(

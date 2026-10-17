@@ -1,4 +1,4 @@
-﻿@import 'tailwindcss';
+@import 'tailwindcss';
 @plugin "daisyui" {
   themes: false;
   exclude: scrollbar;
@@ -8,20 +8,21 @@
   name: 'segra';
   default: true;
   color-scheme: dark;
-  /* Dina färger (oförändrade) */
+  /* Medal-style obsidian/charcoal palette */
   --color-primary: #fecb00;
-  --color-secondary: #171f2a;
+  --color-secondary: #121620;
   --color-accent: #fecb00;
-  --color-neutral: #142638;
-  --color-base-100: #132733;
-  --color-base-200: #15232f;
-  --color-base-300: #171f2a;
-  --color-base-content: #ffffff;
+  --color-neutral: #18202d;
+  --color-base-100: #0b0e14;
+  --color-base-200: #121620;
+  --color-base-300: #080a0f;
+  --color-base-400: #1e2636;
+  --color-base-content: #f3f4f6;
   --color-info: #005293;
-  --color-success: #36d399;
-  --color-warning: #ffd481;
-  --color-error: #f87272;
-  --color-primary-content: var(--color-base-100);
+  --color-success: #10b981;
+  --color-warning: #fecb00;
+  --color-error: #ef4444;
+  --color-primary-content: #000000;
   --card-p: 1rem;
   /* DaisyUI v5 tokens – matcha v4-defaults */
   --radius-box: 1rem; /* v4: --rounded-box: 1rem */
@@ -121,8 +122,8 @@ input[type='number'] {
 }
 
 @theme {
-  --color-base-400: #49515b;
-  --color-custom: #2e3640;
+  --color-base-400: #1e2636;
+  --color-custom: #161d28;
   --color-primary-yellow: #fecb00;
 }
 

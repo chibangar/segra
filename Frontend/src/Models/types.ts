@@ -281,9 +281,9 @@ export interface MenuItemPreference {
 }
 
 export const DEFAULT_MENU_ITEMS: MenuItemPreference[] = [
-  { id: 'Full Sessions', visible: true },
-  { id: 'Replay Buffer', visible: true },
   { id: 'Clips', visible: true },
+  { id: 'Replay Buffer', visible: true },
+  { id: 'Full Sessions', visible: true },
   { id: 'Highlights', visible: true },
   { id: 'Settings', visible: true },
 ];

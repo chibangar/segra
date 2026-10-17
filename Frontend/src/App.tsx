@@ -79,7 +79,7 @@ function App() {
 
     if (isReachable(selectedMenu as MenuItemId)) return;
 
-    const defaultId = (settings.defaultMenuItem ?? 'Full Sessions') as MenuItemId;
+    const defaultId = (settings.defaultMenuItem ?? 'Clips') as MenuItemId;
     const fallback =
       (isReachable(defaultId) ? defaultId : null) ??
       items.find((m) => isReachable(m.id as MenuItemId))?.id;

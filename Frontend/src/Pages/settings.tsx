@@ -127,7 +127,7 @@ export default function Settings() {
   }, [navItems]);
 
   return (
-    <div className="flex h-full flex-col bg-base-200">
+    <div className="flex h-full flex-col bg-[#0b0e14]">
       {/* Jump Nav, outside the scroller so its bottom line spans the scrollbar too */}
       <div
         className={`shrink-0 px-5 pt-5 pb-3 border-b transition-colors duration-300 ${isScrolled ? 'border-base-400/50' : 'border-transparent'}`}

@@ -25,13 +25,14 @@ import {
   Settings,
   OctagonX,
   Monitor,
+  HardDrive,
   LucideIcon,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useRef, useEffect, useLayoutEffect, useState, useMemo } from 'react';
-import Button from './Components/Button';
-import { MenuItemId, DEFAULT_MENU_ITEMS, menuItemHasContent } from './Models/types';
+import { MenuItemId, DEFAULT_MENU_ITEMS, menuItemHasContent, HotkeyAction } from './Models/types';
 import { useI18n } from './Context/I18nContext';
+import { getKeyName } from './Components/Settings/HotkeysSection';
 
 interface MenuProps {
   selectedMenu: string;
@@ -47,7 +48,7 @@ const MENU_ICONS: Record<MenuItemId, LucideIcon> = {
 };
 
 export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const settings = useSettings();
   const appState = useAppState();
   const { hasLoadedObs, recording, preRecording, alwaysOnBufferActive } = appState;
@@ -64,6 +65,14 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
   const [indicatorPosition, setIndicatorPosition] = useState({ top: 12 });
   const [indicatorAnimated, setIndicatorAnimated] = useState(false);
 
+  const clipHotkey = settings.keybindings?.find(
+    (h) => h.action === HotkeyAction.SaveReplayBuffer && h.enabled,
+  );
+  const clipKeyName =
+    clipHotkey?.keys && clipHotkey.keys.length > 0
+      ? clipHotkey.keys.map(getKeyName).join(' + ')
+      : 'F10';
+
   const visibleMenuItems = useMemo(() => {
     const items =
       settings.menuItems && settings.menuItems.length > 0 ? settings.menuItems : DEFAULT_MENU_ITEMS;
@@ -79,24 +88,17 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
     const rowEl = buttonRefs.current[selectedMenu];
     if (!rowEl) return;
     const buttonEl = rowEl.firstElementChild as HTMLElement | null;
-    const buttonHeight = buttonEl?.offsetHeight || 48;
-    const indicatorTop = rowEl.offsetTop + buttonHeight / 2 - 20;
+    const buttonHeight = buttonEl?.offsetHeight || 44;
+    const indicatorTop = rowEl.offsetTop + buttonHeight / 2 - 16;
     setIndicatorPosition({ top: indicatorTop });
   };
 
   useLayoutEffect(() => {
-    // Skip while the active row is mid-exit (App.tsx will redirect selectedMenu to a
-    // fallback on the next tick). Otherwise we'd read a stale layout for one frame.
     computeIndicatorPosition();
-    // After the row enter/exit animation finishes (200ms), recompute. Showing a row
-    // grows its height over the animation window so rows below settle into their final
-    // offsetTop only at the end — this second pass corrects the indicator to match.
     const timeoutId = setTimeout(computeIndicatorPosition, 220);
     return () => clearTimeout(timeoutId);
   }, [selectedMenu, visibleMenuItems]);
 
-  // Enable the slide transition only after the first paint, so the initial render
-  // snaps the indicator to the correct row without animating from the default top.
   useEffect(() => {
     setIndicatorAnimated(true);
   }, []);
@@ -170,7 +172,6 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
     })),
   ];
 
-  // Floats above the button without taking space, so it hides while a card sits flush on the button
   const showAlwaysOnBuffer =
     alwaysOnBufferActive &&
     !recording &&
@@ -182,71 +183,68 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
     Object.keys(clippingProgress).length === 0;
 
   return (
-    <div className="bg-base-300 w-56 h-screen flex flex-col border-r border-base-400">
-      {/* Menu Items */}
-      <div className="flex flex-col px-4 text-left py-2 relative mt-2">
-        {/* Selection indicator rectangle */}
+    <div className="bg-[#080a0f] w-60 h-screen flex flex-col border-r border-white/[0.07] select-none">
+      {/* Brand Header & Live Clipping Status */}
+      <div className="px-3.5 pt-3.5 pb-2">
+        <div className="flex items-center justify-between px-1 mb-3">
+          <div className="flex items-center gap-2.5">
+            <img src="/icon.png" alt="Segra" className="w-6 h-6 object-contain drop-shadow" />
+            <span className="font-extrabold tracking-wider text-base text-white/95">SEGRA</span>
+          </div>
+          <span className="text-[10px] bg-primary/15 text-primary border border-primary/30 font-bold px-1.5 py-0.5 rounded tracking-wide uppercase">
+            MEDAL
+          </span>
+        </div>
+
+        {/* Live Clipping Status Pill */}
+        <div className="bg-[#121620]/90 border border-white/[0.08] rounded-xl px-3 py-2 flex items-center gap-2.5 text-xs shadow-inner">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span
+              className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                recording ? 'bg-red-400' : 'bg-emerald-400'
+              }`}
+            />
+            <span
+              className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                recording ? 'bg-red-500' : 'bg-emerald-500'
+              }`}
+            />
+          </span>
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-semibold text-white/90 truncate leading-tight">
+              {recording
+                ? (recording.game ? `${recording.game}` : t('menu.recording'))
+                : preRecording
+                  ? `${preRecording.game}`
+                  : (language === 'pt-PT' ? 'Pronto a Clipar' : 'Ready to Clip')}
+            </span>
+            <span className="text-[10px] text-gray-400 truncate leading-tight mt-0.5">
+              {recording
+                ? (language === 'pt-PT' ? 'Sessão ativa' : 'Recording session')
+                : `${language === 'pt-PT' ? 'Atalho' : 'Shortcut'}: ${clipKeyName}`}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Menu Navigation Items */}
+      <div className="flex flex-col px-3 text-left py-1 relative">
+        {/* Selection indicator pill */}
         <div
-          className={`absolute w-1.5 bg-primary rounded-r ${
+          className={`absolute w-1 bg-primary rounded-r shadow-[0_0_8px_rgba(254,203,0,0.6)] ${
             indicatorAnimated ? 'transition-all duration-200 ease-in-out' : ''
           }`}
           style={{
             left: 0,
             top: `${indicatorPosition.top}px`,
-            height: '40px',
+            height: '32px',
           }}
         />
         <AnimatePresence initial={false} mode="popLayout">
           {visibleMenuItems.map(({ id }) => {
             const Icon = MENU_ICONS[id];
             const isActive = selectedMenu === id;
-            // Disable content navigation while a migration is moving files (paths are in flux);
-            // Settings stays enabled so the user can watch progress.
             const isDisabled = isMigrating && id !== 'Settings';
-
-            const buttonNode =
-              id === 'Highlights' ? (
-                <Button
-                  variant="nav"
-                  className={`justify-between ${isActive ? 'text-primary' : ''}`}
-                  disabled={isDisabled}
-                  onMouseDown={() => onSelectMenu(id)}
-                >
-                  <span className="flex items-center gap-2">
-                    <Icon className="w-5 h-5" />
-                    {getMenuLabel(id)}
-                  </span>
-                  <div className="ml-auto flex items-center">
-                    <AnimatePresence>
-                      {hasActiveAiHighlights && !isActive && (
-                        <motion.div
-                          className="flex items-center justify-center"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <CircularProgress
-                            progress={averageAiProgress}
-                            size={24}
-                            strokeWidth={2}
-                          />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </Button>
-              ) : (
-                <Button
-                  variant="nav"
-                  className={isActive ? 'text-primary' : ''}
-                  disabled={isDisabled}
-                  onMouseDown={() => onSelectMenu(id)}
-                >
-                  <Icon className="w-5 h-5" />
-                  {getMenuLabel(id)}
-                </Button>
-              );
 
             return (
               <motion.div
@@ -259,9 +257,43 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.2, ease: 'easeInOut' }}
-                className="overflow-hidden pb-2 last:pb-0"
+                className="overflow-hidden pb-1.5 last:pb-0"
               >
-                {buttonNode}
+                <button
+                  disabled={isDisabled}
+                  onMouseDown={() => onSelectMenu(id)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 cursor-pointer ${
+                    isActive
+                      ? 'bg-white/[0.08] text-primary font-semibold shadow-sm border border-white/[0.08]'
+                      : 'text-gray-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : 'text-gray-400'}`} />
+                    <span className="truncate">{getMenuLabel(id)}</span>
+                  </span>
+                  {id === 'Highlights' && (
+                    <div className="ml-auto flex items-center">
+                      <AnimatePresence>
+                        {hasActiveAiHighlights && !isActive && (
+                          <motion.div
+                            className="flex items-center justify-center"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <CircularProgress
+                              progress={averageAiProgress}
+                              size={20}
+                              strokeWidth={2}
+                            />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+                </button>
               </motion.div>
             );
           })}
@@ -275,9 +307,9 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
       {!hasLoadedObs && obsDownloadProgress !== null && obsDownloadProgress < 100 && (
         <div className="mb-4 flex flex-col items-center px-4">
           <p className="text-center text-sm text-gray-300 mb-2">{t('menu.downloadingObs')}</p>
-          <div className="w-full bg-base-200 rounded-full h-1.5">
+          <div className="w-full bg-[#121620] rounded-full h-1.5 overflow-hidden">
             <div
-              className="h-1.5 rounded-full bg-primary transition-all duration-300"
+              className="h-1.5 rounded-full bg-primary transition-all duration-300 shadow-[0_0_6px_rgba(254,203,0,0.4)]"
               style={{ width: `${obsDownloadProgress}%` }}
             ></div>
           </div>
@@ -285,8 +317,29 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
         </div>
       )}
 
+      {/* Medal Storage Meter */}
+      <div className="mx-3.5 mb-2.5 bg-[#121620]/80 border border-white/[0.06] rounded-xl p-2.5 text-xs flex flex-col gap-1.5">
+        <div className="flex items-center justify-between text-gray-400 text-[11px]">
+          <span className="flex items-center gap-1.5 font-medium text-gray-300">
+            <HardDrive size={13} className="text-primary" />
+            {language === 'pt-PT' ? 'Armazenamento' : 'Storage'}
+          </span>
+          <span className="font-semibold text-white/90">
+            {(appState.currentFolderSizeGb ?? 0).toFixed(1)} GB
+          </span>
+        </div>
+        <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-all duration-300 shadow-[0_0_6px_rgba(254,203,0,0.4)]"
+            style={{
+              width: `${Math.min(100, Math.max(3, ((appState.currentFolderSizeGb ?? 0) / (settings.storageLimit || 100)) * 100))}%`,
+            }}
+          />
+        </div>
+      </div>
+
       {/* Start and Stop Buttons */}
-      <div className="relative mb-4 px-4">
+      <div className="relative mb-3.5 px-3.5">
         <AnimatePresence>
           {showAlwaysOnBuffer && (
             <motion.div
@@ -303,9 +356,16 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
           )}
         </AnimatePresence>
         <div className="flex flex-col items-center z-50">
-          <Button
-            variant="primary"
-            className="w-full h-12"
+          <button
+            className={`w-full h-11 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer ${
+              buttonCooldown || (appState.recording && recording && recording.endTime !== null)
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } ${
+              appState.recording || appState.preRecording
+                ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25 animate-pulse'
+                : 'bg-primary hover:bg-[#e6b800] text-black shadow-lg shadow-yellow-500/20 hover:scale-[1.01] active:scale-[0.99]'
+            }`}
             disabled={
               buttonCooldown || (appState.recording && recording && recording.endTime !== null)
             }
@@ -329,7 +389,7 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
                 {t('menu.displayCapture')}
               </>
             )}
-          </Button>
+          </button>
         </div>
       </div>
     </div>

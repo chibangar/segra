@@ -79,7 +79,7 @@ export default function GameFilterDropdown({
         initial={false}
         animate={triggerWidth ? { width: triggerWidth } : undefined}
         transition={WIDTH_SPRING}
-        className={`btn btn-sm no-animation btn-secondary border border-base-400 h-8 p-0 overflow-hidden justify-end hover:text-primary hover:*:text-primary text-gray-300 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+        className={`btn btn-sm no-animation bg-[#121620] border border-white/[0.08] hover:border-white/20 h-8 p-0 overflow-hidden justify-end hover:text-primary hover:*:text-primary text-gray-300 rounded-lg ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
       >
         <span ref={measureRef} className="flex items-center w-max shrink-0 px-3">
           <span className="max-w-56 min-w-0 flex">{selected?.label}</span>
@@ -102,7 +102,7 @@ export default function GameFilterDropdown({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="absolute right-0 top-full mt-1 z-999 origin-top p-2 overflow-y-auto bg-base-300 border border-base-400 rounded-box shadow"
+            className="absolute right-0 top-full mt-1 z-999 origin-top p-1.5 overflow-y-auto bg-[#121620] border border-white/[0.09] rounded-xl shadow-2xl"
             style={{ width: panelWidth, maxHeight: MENU_MAX_HEIGHT }}
           >
             {items.map((item) => {

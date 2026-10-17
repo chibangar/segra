@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { useSettings } from '../Context/SettingsContext';
 import { useAppState, usePatchContent } from '../Context/AppStateContext';
-import { BookmarkType, Content, includeInHighlight } from '../Models/types';
+import { BookmarkType, BookmarkSubtype, Content, includeInHighlight } from '../Models/types';
 import { sendMessageToBackend } from '../Utils/MessageUtils';
 import { openFileLocation, contentTypeToFolderName } from '../Utils/FileUtils';
 import { useModal } from '../Context/ModalContext';
@@ -17,6 +17,7 @@ import {
   Copy,
   Bookmark,
   ExternalLink,
+  Play,
 } from 'lucide-react';
 import { Link, Check } from 'lucide';
 import { MorphIcon } from 'morphicons/react';
@@ -180,29 +181,23 @@ export default function ContentCard({
       <div
         className={
           type === 'Highlight'
-            ? 'card card-compact w-full relative highlight-card'
-            : 'card card-compact bg-base-300 text-gray-300 w-full border border-[#49515b]'
+            ? 'w-full rounded-2xl relative highlight-card overflow-hidden'
+            : 'flex flex-col w-full rounded-2xl overflow-hidden bg-[#121620] border border-white/[0.07]'
         }
       >
         {type === 'Highlight' && (
-          <div className="absolute inset-0 rounded-lg highlight-border">
-            <div className="card absolute inset-px bg-base-300 z-2">
-              <figure className="relative aspect-w-16 aspect-h-9">
-                {/* Thumbnail Skeleton */}
+          <div className="absolute inset-0 rounded-2xl highlight-border">
+            <div className="absolute inset-px bg-[#121620] rounded-2xl overflow-hidden z-2">
+              <figure className="relative aspect-video">
                 <div
-                  className="skeleton w-full h-0 relative bg-base-200/75 rounded-none"
-                  style={{ paddingTop: '56.25%' }}
+                  className="skeleton w-full h-full bg-white/5"
                 ></div>
-                <span
-                  className="absolute bottom-2 right-2 bg-opacity-75 text-white text-xs rounded skeleton w-full"
-                  style={{ aspectRatio: '16/9', visibility: 'hidden' }}
-                ></span>
               </figure>
-              <div className="card-body text-gray-300">
+              <div className="p-3 text-gray-300">
                 {/* Title Skeleton */}
-                <div className="skeleton bg-base-300 h-5 w-3/4 mb-2 mt-1"></div>
+                <div className="skeleton bg-white/10 h-4 w-3/4 mb-2 mt-1 rounded"></div>
                 {/* Metadata Skeleton */}
-                <div className="skeleton h-4 w-4/6"></div>
+                <div className="skeleton bg-white/5 h-3.5 w-4/6 rounded"></div>
               </div>
             </div>
           </div>
@@ -210,27 +205,14 @@ export default function ContentCard({
 
         {type !== 'Highlight' && (
           <>
-            {/* Mirrors the loaded card's figure/body exactly so the skeleton is the same height. */}
-            <figure className="relative aspect-video bg-black">
-              <div className="skeleton w-full h-full rounded-none bg-base-200/75"></div>
+            <figure className="relative aspect-video bg-black/60">
+              <div className="skeleton w-full h-full bg-white/5"></div>
             </figure>
-            <div className="card-body gap-1 pt-2">
+            <div className="p-3 flex flex-col gap-1.5">
               <div className="flex justify-between items-center">
-                <h2 className="card-title !block w-3/4">
-                  {/* Title Skeleton */}
-                  <span className="skeleton inline-block align-middle h-4 w-full rounded"></span>
-                </h2>
-                <span
-                  aria-hidden="true"
-                  className="btn btn-ghost btn-sm btn-circle invisible shrink-0"
-                >
-                  <Ellipsis size={24} />
-                </span>
+                <div className="skeleton bg-white/10 h-4 w-3/4 rounded"></div>
               </div>
-              {/* Metadata Skeleton */}
-              <div className="text-sm">
-                <span className="skeleton inline-block align-middle h-3.5 w-4/6 rounded"></span>
-              </div>
+              <div className="skeleton bg-white/5 h-3 w-1/2 rounded"></div>
             </div>
           </>
         )}
@@ -262,6 +244,15 @@ export default function ContentCard({
   const formattedDuration = formatDuration(content!.duration);
   const manualBookmarkCount =
     content?.bookmarks?.filter((b) => b.type === BookmarkType.Manual).length ?? 0;
+
+  const isAceClip = useMemo(() => {
+    if (!content) return false;
+    const hasAceBookmark = content.bookmarks?.some(
+      (b) => b.subtype === BookmarkSubtype.Ace || (b.subtype as string) === 'Ace',
+    );
+    const hasAceInTitle = content.title?.toLowerCase().includes('ace') ?? false;
+    return hasAceBookmark || hasAceInTitle;
+  }, [content]);
 
   // Check if content was created within the last hour and hasn't been viewed yet
   const isRecent = useMemo((): boolean => {
@@ -549,7 +540,7 @@ export default function ContentCard({
       <div
         ref={cardRef}
         data-content-id={content!.id}
-        className={`card card-compact bg-base-300 w-full border border-[#49515b] ${isSelected ? '!outline !outline-1 !outline-primary' : ''}`}
+        className={`w-full rounded-2xl bg-[#121620] border border-white/[0.07] ${isSelected ? '!ring-2 !ring-primary' : ''}`}
         style={{ height: placeholderHeight! }}
       />
     );
@@ -559,7 +550,11 @@ export default function ContentCard({
     <div
       ref={cardRef}
       data-content-id={content!.id}
-      className={`card card-compact bg-base-300 text-gray-300 w-full border border-[#49515b] ${isSelected ? '!outline !outline-1 !outline-primary' : ''} ${isHighlighted ? 'import-pulse' : ''} ${isBeingCompressed ? 'cursor-default opacity-75' : 'cursor-pointer'} ${isSelectionMode ? 'select-none' : ''}`}
+      className={`group relative flex flex-col w-full rounded-2xl overflow-hidden bg-[#121620] border border-white/[0.07] hover:border-white/20 hover:shadow-2xl hover:shadow-black/70 hover:-translate-y-0.5 transition-all duration-200 ${
+        isSelected ? '!ring-2 !ring-primary border-primary/50' : ''
+      } ${isHighlighted ? 'import-pulse' : ''} ${
+        isBeingCompressed ? 'cursor-default opacity-75' : 'cursor-pointer'
+      } ${isSelectionMode ? 'select-none' : ''}`}
       onClick={(e) => {
         if (isBeingCompressed) return;
         if (!isSelectionMode && !e.ctrlKey) markAsViewed();
@@ -567,16 +562,16 @@ export default function ContentCard({
       }}
       onContextMenu={openContextMenu}
     >
-      <figure className="relative aspect-video bg-black">
+      <figure className="relative aspect-video w-full bg-black/60 overflow-hidden">
         {/* Shimmer crossfades out as the image fades in, so the figure never flashes black. */}
         <div
-          className={`absolute inset-0 rounded-none bg-base-200/75 transition-opacity duration-200 ${thumbnailLoaded ? 'opacity-0' : 'skeleton opacity-100'}`}
-        ></div>
+          className={`absolute inset-0 bg-[#0b0e14] transition-opacity duration-200 ${thumbnailLoaded ? 'opacity-0' : 'skeleton opacity-100'}`}
+        />
         <img
           ref={thumbnailRef}
           src={thumbnailPath}
           alt={'thumbnail'}
-          className={`w-full h-full object-contain select-none transition-opacity duration-200 ${thumbnailLoaded ? 'opacity-100' : 'opacity-0'}`}
+          className={`w-full h-full object-cover select-none transition-all duration-300 group-hover:scale-105 ${thumbnailLoaded ? 'opacity-100' : 'opacity-0'}`}
           loading="lazy"
           width={1600}
           height={900}
@@ -584,31 +579,52 @@ export default function ContentCard({
           onLoad={markThumbnailLoaded}
           onError={markThumbnailLoaded}
         />
-        <span className="absolute bottom-2 right-2 bg-black/75 text-white text-xs px-2 py-1 rounded">
+
+        {/* Hover play button overlay - Medal signature */}
+        <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
+          <div className="w-11 h-11 rounded-full bg-black/75 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-2xl scale-90 group-hover:scale-100 transition-transform duration-200">
+            <Play size={18} fill="#fecb00" className="ml-0.5 text-primary" />
+          </div>
+        </div>
+
+        {/* Medal duration badge */}
+        <span className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-md text-white/95 text-[11px] font-semibold px-2 py-0.5 rounded-md border border-white/10 tracking-wide">
           {formattedDuration}
         </span>
-        {manualBookmarkCount > 0 && (
-          <span className="absolute top-2 right-2 bg-black/75 text-yellow-400 text-xs px-2 py-1 rounded">
-            <Bookmark size={12} fill="currentColor" className="inline align-middle mr-1" />
-            <span className="align-middle">{manualBookmarkCount}</span>
+
+        {/* ACE Badge or Bookmark Badge */}
+        {isAceClip ? (
+          <span className="absolute top-2 right-2 bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-extrabold text-[10px] px-2 py-0.5 rounded shadow-lg shadow-yellow-500/30 flex items-center gap-1 uppercase tracking-wider">
+            ★ ACE
           </span>
-        )}
+        ) : manualBookmarkCount > 0 ? (
+          <span className="absolute top-2 right-2 bg-black/80 backdrop-blur-md text-yellow-400 border border-yellow-400/20 text-xs px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
+            <Bookmark size={12} fill="currentColor" />
+            <span>{manualBookmarkCount}</span>
+          </span>
+        ) : null}
+
+        {/* Selection checkbox */}
         <input
           type="checkbox"
-          className={`checkbox checkbox-primary checkbox-sm absolute top-2 left-2 [&:not(:checked)]:bg-black/30 transition-opacity duration-200 ${isSelectionMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          className={`checkbox checkbox-primary checkbox-sm absolute top-2 left-2 [&:not(:checked)]:bg-black/40 transition-opacity duration-200 ${isSelectionMode ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
           checked={isSelected}
           readOnly
         />
+
+        {/* NEW Badge */}
         {isRecent && (type === 'Session' || type === 'Buffer') && showNewBadgeOnVideos && (
           <span
-            className={`absolute top-2 left-2 badge badge-primary badge-sm text-base-300 transition-opacity duration-200 ${isSelectionMode ? 'opacity-0' : 'opacity-90'}`}
+            className={`absolute top-2 left-2 bg-primary text-black font-bold text-[10px] px-2 py-0.5 rounded tracking-wider shadow transition-opacity duration-200 ${isSelectionMode ? 'opacity-0' : 'opacity-95'}`}
           >
-            NEW
+            NOVO
           </span>
         )}
+
+        {/* Compression progress overlay */}
         {currentCompressionProgress && (
-          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
-            <p className="text-white text-sm mb-2">
+          <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center">
+            <p className="text-white text-sm mb-2 font-medium">
               {currentCompressionProgress.status === 'compressing'
                 ? 'Compressing...'
                 : currentCompressionProgress.status === 'done'
@@ -620,7 +636,7 @@ export default function ContentCard({
             {currentCompressionProgress.status === 'compressing' && (
               <div className="w-2/3 h-1.5 bg-white/20 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-white/90 rounded-full transition-all duration-1000"
+                  className="h-full bg-primary rounded-full transition-all duration-1000"
                   style={{ width: `${currentCompressionProgress.progress}%` }}
                 />
               </div>
@@ -632,8 +648,8 @@ export default function ContentCard({
         )}
       </figure>
 
-      <div className="card-body gap-1 pt-2">
-        <div className="flex justify-between items-center">
+      <div className="p-3 flex flex-col gap-1.5 flex-1 justify-between">
+        <div className="flex justify-between items-center gap-2">
           {isRenaming ? (
             <input
               ref={renameInputRef}
@@ -651,17 +667,17 @@ export default function ContentCard({
                 }
               }}
               onClick={(e) => e.stopPropagation()}
-              className="card-title !block truncate bg-transparent outline-none w-full"
+              className="text-sm font-semibold truncate bg-transparent outline-none w-full text-white"
               placeholder={content!.game || 'Untitled'}
             />
           ) : (
-            <h2 className="card-title !block truncate">
+            <h2 className="text-sm font-semibold truncate text-white/95 group-hover:text-primary transition-colors">
               {content!.title || content!.game || 'Untitled'}
             </h2>
           )}
           <div
             ref={dropdownRef}
-            className={`dropdown dropdown-end ${isBeingCompressed ? 'pointer-events-none opacity-50' : ''}`}
+            className={`dropdown dropdown-end shrink-0 ${isBeingCompressed ? 'pointer-events-none opacity-50' : ''}`}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
@@ -680,7 +696,6 @@ export default function ContentCard({
               setIsDropdownOpen(true);
             }}
             onBlur={(e) => {
-              // Only close if focus moved outside the dropdown
               if (!e.currentTarget.contains(e.relatedTarget)) {
                 setIsDropdownOpen(false);
               }
@@ -689,26 +704,35 @@ export default function ContentCard({
             <label
               ref={dropdownTriggerRef}
               tabIndex={isBeingCompressed ? -1 : 0}
-              className="btn btn-ghost btn-sm btn-circle hover:bg-white/10 active:bg-white/10"
+              className="btn btn-ghost btn-xs btn-circle text-gray-400 hover:text-white hover:bg-white/10 active:bg-white/10"
             >
-              <Ellipsis size={24} />
+              <Ellipsis size={18} />
             </label>
             <ul
               tabIndex={0}
-              className="dropdown-content menu bg-base-300 border border-base-400 rounded-box z-999 w-52 p-2"
+              className="dropdown-content menu bg-[#121620] border border-white/[0.09] rounded-xl shadow-2xl z-999 w-52 p-1.5"
             >
               {renderMenuItems(() => (document.activeElement as HTMLElement).blur())}
             </ul>
           </div>
         </div>
-        <div className="text-sm text-gray-200 flex items-center justify-between w-full">
-          <span>
-            {content!.fileSize} &bull; {new Date(content!.createdAt).toLocaleDateString()}
-          </span>
+
+        <div className="text-xs text-gray-400 flex items-center justify-between w-full min-w-0">
+          <div className="flex items-center gap-1.5 truncate">
+            {content!.game && (
+              <span className="bg-white/[0.06] text-gray-300 font-medium px-1.5 py-0.5 rounded text-[11px] truncate max-w-[130px]">
+                {content!.game}
+              </span>
+            )}
+            <span className="text-gray-600">&bull;</span>
+            <span className="truncate">{new Date(content!.createdAt).toLocaleDateString()}</span>
+            <span className="text-gray-600">&bull;</span>
+            <span className="shrink-0">{content!.fileSize}</span>
+          </div>
           {!airplaneMode && uploadUrl && (
-            <div className="flex absolute right-3 gap-0 pr-[0.3875rem]">
+            <div className="flex items-center gap-0.5 shrink-0 pl-1">
               <span
-                className="btn btn-ghost btn-sm btn-circle size-8.5 relative group hover:bg-white/10 active:bg-white/10"
+                className="btn btn-ghost btn-xs btn-circle hover:bg-white/10 active:bg-white/10 text-gray-400 hover:text-white"
                 onClick={(e) => {
                   e.stopPropagation();
                   navigator.clipboard.writeText(uploadUrl);
@@ -716,10 +740,10 @@ export default function ContentCard({
                   setTimeout(() => setCopied(false), 1500);
                 }}
               >
-                <MorphIcon icon={copied ? Check : Link} size={18} spring="snappy" />
+                <MorphIcon icon={copied ? Check : Link} size={15} spring="snappy" />
               </span>
               <span
-                className="btn btn-ghost btn-sm btn-circle size-8.5 -ml-1 hover:bg-white/10 active:bg-white/10"
+                className="btn btn-ghost btn-xs btn-circle hover:bg-white/10 active:bg-white/10 text-gray-400 hover:text-white"
                 onClick={(e) => {
                   e.stopPropagation();
                   sendMessageToBackend('OpenInBrowser', {
@@ -727,7 +751,7 @@ export default function ContentCard({
                   });
                 }}
               >
-                <ExternalLink size={18} />
+                <ExternalLink size={15} />
               </span>
             </div>
           )}
@@ -736,7 +760,7 @@ export default function ContentCard({
 
       {contextMenuPosition && (
         <ul
-          className="menu fixed z-1000 w-52 rounded-box border border-base-400 bg-base-300 p-2 shadow-xl"
+          className="menu fixed z-1000 w-52 rounded-xl border border-white/[0.09] bg-[#121620] p-1.5 shadow-2xl"
           style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
           onClick={(event) => event.stopPropagation()}
         >

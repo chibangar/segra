@@ -12,9 +12,9 @@ namespace Segra.Backend.Core.Models
         // its field initializers (static fields initialize in source order).
         public static readonly List<string> KnownMenuItemIds = new List<string>
         {
-            "Full Sessions",
-            "Replay Buffer",
             "Clips",
+            "Replay Buffer",
+            "Full Sessions",
             "Highlights",
             "Settings"
         };
@@ -115,7 +115,7 @@ namespace Segra.Backend.Core.Models
         private List<MenuItemPreference> _menuItems = KnownMenuItemIds
             .Select(id => new MenuItemPreference { Id = id, Visible = true })
             .ToList();
-        private string _defaultMenuItem = "Full Sessions";
+        private string _defaultMenuItem = "Clips";
 
         private static List<Hotkey> GetDefaultHotkeys()
         {

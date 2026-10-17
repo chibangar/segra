@@ -8,7 +8,7 @@ interface SelectedMenuContextValue {
 
 const SelectedMenuContext = createContext<SelectedMenuContextValue | undefined>(undefined);
 
-const defaultMenu = 'Full Sessions';
+const defaultMenu = 'Clips';
 
 const readCachedDefaultMenu = (): string | null => {
   if (typeof window === 'undefined') return null;

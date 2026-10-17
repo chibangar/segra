@@ -585,25 +585,26 @@ export default function ContentPage({
   return (
     <div
       ref={containerRef}
-      className="relative p-5 space-y-6 overflow-y-scroll h-full bg-base-200 overflow-x-hidden"
+      className="relative p-6 space-y-6 overflow-y-scroll h-full bg-[#0b0e14] overflow-x-hidden"
       onScroll={handleScroll}
       onMouseDown={handleMarqueeMouseDown}
     >
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-3">
-          <h1 className="text-[1.75rem] font-bold">{pageTitle}</h1>
+          <h1 className="text-2xl font-extrabold text-white tracking-tight">{pageTitle}</h1>
+          <span className="bg-white/[0.08] text-gray-300 border border-white/[0.08] font-semibold text-xs px-2.5 py-0.5 rounded-full">
+            {filteredItems.length}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           {(sectionId === 'sessions' || sectionId === 'replayBuffer') && (
-            <Button
-              variant="primary"
-              size="sm"
-              className="no-animation h-8 gap-1"
+            <button
+              className="btn btn-sm no-animation bg-primary hover:bg-[#e6b800] text-black font-semibold h-8 px-3 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-yellow-500/10"
               onClick={() => sendMessageToBackend('ImportFile', { sectionId })}
             >
-              <FileUp size={16} />
-              {language === 'pt-PT' ? 'Importar' : 'Import'}
-            </Button>
+              <FileUp size={15} />
+              <span>{language === 'pt-PT' ? 'Importar' : 'Import'}</span>
+            </button>
           )}
           <ContentFilters
             games={gameOptions}

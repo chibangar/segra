@@ -135,13 +135,13 @@ export default function ContentFilters({
       <div className="dropdown dropdown-end">
         <button
           disabled={totalCount === 0}
-          className={`btn btn-sm no-animation btn-secondary border border-base-400 hover:text-primary hover:border-base-400 flex items-center gap-1 text-gray-300 h-8 ${totalCount === 0 ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+          className={`btn btn-sm no-animation bg-[#121620] border border-white/[0.08] hover:border-white/20 hover:text-primary flex items-center gap-1.5 text-gray-300 h-8 rounded-lg ${totalCount === 0 ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
         >
-          <ArrowUpDown size={16} />
-          {getSortLabel(sortOption)}
+          <ArrowUpDown size={15} />
+          <span>{getSortLabel(sortOption)}</span>
         </button>
         <ul
-          className="dropdown-content menu bg-base-300 border border-base-400 rounded-box z-999 w-56 p-2 mt-1 shadow"
+          className="dropdown-content menu bg-[#121620] border border-white/[0.09] rounded-xl shadow-2xl z-999 w-52 p-1.5 mt-1"
           tabIndex={0}
         >
           <li>
