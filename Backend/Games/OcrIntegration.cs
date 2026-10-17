@@ -494,20 +494,9 @@ namespace Segra.Backend.Games
 
         protected void AddBookmark(BookmarkType type, DateTime? detectionTime = null)
         {
-            var recording = AppState.Instance.Recording;
-            if (recording == null)
-            {
-                Log.Warning($"[{_config.LogPrefix}] No recording active, skipping {type} bookmark");
-                return;
-            }
-
-            var bookmark = new Bookmark
-            {
-                Type = type,
-                Time = (detectionTime ?? DateTime.Now) - recording.StartTime - _config.TimeCompensation
-            };
-            recording.AddBookmark(bookmark);
-            Log.Information($"[{_config.LogPrefix}] BOOKMARK ADDED: {type} at {bookmark.Time}");
+            DateTime eventTime = (detectionTime ?? DateTime.Now) - _config.TimeCompensation;
+            GameIntegrationService.RegisterGameEvent(type, _config.LogPrefix, null, eventTime);
+            Log.Information($"[{_config.LogPrefix}] BOOKMARK PROCESSED: {type}");
         }
     }
 }

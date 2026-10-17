@@ -233,15 +233,16 @@ namespace Segra.Backend.Recorder
 
                 _autoClipCts = new CancellationTokenSource();
                 var token = _autoClipCts.Token;
+                int delayMs = Math.Clamp((int)(Settings.Instance.HighlightPaddingAfter * 1000), 2000, 10000);
 
-                Log.Information($"Auto-clip scheduled for {type} in {gameName ?? "game"} (waiting 3.5s post-kill padding)");
+                Log.Information($"Auto-clip scheduled for {type} in {gameName ?? "game"} (waiting {delayMs}ms post-kill padding)");
 
                 Task.Run(async () =>
                 {
                     try
                     {
-                        // Wait 3.5s so the replay buffer captures the kill and post-kill reaction
-                        await Task.Delay(3500, token);
+                        // Wait configured padding so the replay buffer captures the kill and post-kill reaction
+                        await Task.Delay(delayMs, token);
 
                         if (token.IsCancellationRequested)
                             return;
@@ -251,7 +252,7 @@ namespace Segra.Backend.Recorder
                     }
                     catch (OperationCanceledException)
                     {
-                        // Another kill happened within 3.5s, extending the clip
+                        // Another kill happened within the padding window, extending the clip (multi-kill)
                         Log.Information("Auto-clip timer extended by another kill/event (multi-kill)");
                     }
                     catch (Exception ex)

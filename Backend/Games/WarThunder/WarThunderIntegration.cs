@@ -203,21 +203,10 @@ namespace Segra.Backend.Games.WarThunder
 
         private static void AddBookmark(BookmarkType type)
         {
-            var recording = AppState.Instance.Recording;
-            if (recording == null)
-            {
-                Log.Debug($"[WT] No recording active, skipping {type} bookmark");
-                return;
-            }
-
             var compensation = TimeSpan.FromMilliseconds(PollIntervalMs / 2.0);
-            var bookmark = new Bookmark
-            {
-                Type = type,
-                Time = (DateTime.Now - recording.StartTime) - compensation
-            };
-            recording.AddBookmark(bookmark);
-            Log.Information($"[WT] BOOKMARK ADDED: {type} at {bookmark.Time}");
+            DateTime eventTime = DateTime.Now - compensation;
+            GameIntegrationService.RegisterGameEvent(type, "War Thunder", null, eventTime);
+            Log.Information($"[WT] BOOKMARK PROCESSED: {type}");
         }
     }
 }

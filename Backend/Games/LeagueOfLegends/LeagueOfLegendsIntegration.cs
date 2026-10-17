@@ -224,20 +224,7 @@ namespace Segra.Backend.Games.LeagueOfLegends
 
         private void AddBookmark(BookmarkType type)
         {
-            var recording = AppState.Instance.Recording;
-            if (recording == null)
-            {
-                return;
-            }
-
-            var bookmark = new Bookmark
-            {
-                Type = type,
-                Time = DateTime.Now - recording.StartTime
-            };
-
-            recording.AddBookmark(bookmark);
-            Log.Information($"Added {type} bookmark at {bookmark.Time}");
+            GameIntegrationService.RegisterGameEvent(type, "League of Legends");
         }
     }
 

@@ -136,5 +136,32 @@ namespace Segra.Backend.Games
                 _lock.Release();
             }
         }
+
+        public static void RegisterGameEvent(BookmarkType type, string? gameName, BookmarkSubtype? subtype = null, DateTime? eventTime = null)
+        {
+            var recording = AppState.Instance.Recording;
+            if (recording != null)
+            {
+                var bookmark = new Bookmark
+                {
+                    Type = type,
+                    Subtype = subtype,
+                    Time = (eventTime ?? DateTime.Now) - recording.StartTime
+                };
+                recording.AddBookmark(bookmark);
+                Log.Information($"Added {type} bookmark at {bookmark.Time} for {gameName ?? recording.Game}");
+            }
+            else
+            {
+                Log.Information($"Event {type} detected while recording object is null (Buffer mode), showing in-game notification and scheduling auto-clip");
+#if WINDOWS
+                Windows.Display.InGameNotificationService.ShowEvent(type, subtype, gameName);
+#endif
+                if (Settings.Instance.AutoClipKills && (type == BookmarkType.Kill || type == BookmarkType.Goal))
+                {
+                    Recorder.OBSService.ScheduleAutoClip(type, gameName);
+                }
+            }
+        }
     }
 }

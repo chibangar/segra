@@ -172,13 +172,8 @@ namespace Segra.Backend.Games.Rust
 
         private void AddBookmarkAt(BookmarkType type, DateTime time, string detail)
         {
-            var recording = AppState.Instance.Recording;
-            if (recording == null) return;
-            TimeSpan bookmarkTime = time - recording.StartTime;
-            if (bookmarkTime < TimeSpan.Zero) return;
-
-            recording.AddBookmark(new Bookmark { Type = type, Time = bookmarkTime });
-            Log.Information($"[{LogPrefix}] BOOKMARK ADDED: {type} at {bookmarkTime} ({detail})");
+            GameIntegrationService.RegisterGameEvent(type, "Rust", null, time);
+            Log.Information($"[{LogPrefix}] BOOKMARK PROCESSED: {type} ({detail})");
         }
 
         // Lines Rust logs start with "2026-05-18T21:29:29.994Z|0xad1c|"

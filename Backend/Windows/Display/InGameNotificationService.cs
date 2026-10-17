@@ -74,13 +74,16 @@ namespace Segra.Backend.Windows.Display
             string title = isPt ? "CLIP GUARDADO!" : "CLIP SAVED!";
             string subtitle = !string.IsNullOrWhiteSpace(gameName) ? gameName : (isPt ? "Replay Guardado" : "Replay Saved");
             ShowNotification(title, subtitle, InGameNotificationType.ClipSaved);
+            PlaySound();
         }
 
         public static void ShowKill(string? gameName, bool isHeadshot = false)
         {
             bool isPt = IsPortuguese();
             string title = isHeadshot ? "HEADSHOT!" : (isPt ? "KILL REGISTADA!" : "KILL RECORDED!");
-            string subtitle = !string.IsNullOrWhiteSpace(gameName) ? gameName : (isPt ? "Momento de Destaque" : "Highlight Saved");
+            string subtitle = Settings.Instance.AutoClipKills
+                ? (isPt ? "Clip Auto-Guardado" : "Auto-Clip Saved")
+                : (!string.IsNullOrWhiteSpace(gameName) ? gameName : (isPt ? "Momento de Destaque" : "Highlight Saved"));
             ShowNotification(title, subtitle, isHeadshot ? InGameNotificationType.Headshot : InGameNotificationType.Kill);
             PlaySound();
         }
@@ -94,7 +97,10 @@ namespace Segra.Backend.Windows.Display
                     ShowKill(gameName, subtype == BookmarkSubtype.Headshot);
                     break;
                 case BookmarkType.Goal:
-                    ShowNotification(isPt ? "GOLO!" : "GOAL!", gameName ?? "", InGameNotificationType.Goal);
+                    string goalSubtitle = Settings.Instance.AutoClipKills
+                        ? (isPt ? "Clip Auto-Guardado" : "Auto-Clip Saved")
+                        : (!string.IsNullOrWhiteSpace(gameName) ? gameName : "");
+                    ShowNotification(isPt ? "GOLO!" : "GOAL!", goalSubtitle, InGameNotificationType.Goal);
                     PlaySound();
                     break;
                 case BookmarkType.Assist:
@@ -171,13 +177,8 @@ namespace Segra.Backend.Windows.Display
                         if (_activeForm == null || _activeForm.IsDisposed)
                         {
                             _activeForm = new NotificationForm();
-                            _activeForm.ShowData(title, subtitle, type);
-                            _activeForm.Show();
                         }
-                        else
-                        {
-                            _activeForm.ShowData(title, subtitle, type);
-                        }
+                        _activeForm.ShowData(title, subtitle, type);
                     }
                 }, null);
             }
@@ -292,7 +293,7 @@ namespace Segra.Backend.Windows.Display
                     Screen screen = (fg != IntPtr.Zero)
                         ? Screen.FromHandle(fg)
                         : (Screen.PrimaryScreen ?? Screen.AllScreens.FirstOrDefault()!);
-                    var area = screen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+                    var area = screen?.Bounds ?? screen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
                     int padX = 24;
                     int padY = 24;
 
@@ -374,7 +375,8 @@ namespace Segra.Backend.Windows.Display
                 if (_ticks >= TotalTicks)
                 {
                     _animTimer?.Stop();
-                    Close();
+                    Opacity = 0.0;
+                    Hide();
                 }
             }
 
