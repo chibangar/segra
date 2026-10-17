@@ -42,6 +42,10 @@ namespace Segra.Backend.Core.Models
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public enum BookmarkSubtype
     {
-        Headshot
+        Headshot,
+        DoubleKill,
+        TripleKill,
+        QuadKill,
+        Ace
     }
 }

@@ -70,6 +70,14 @@ export default function InAppNotificationOverlay() {
         return '#ef4444'; // Red-500
       case 'Headshot':
         return '#f97316'; // Orange-500
+      case 'DoubleKill':
+        return '#fb923c'; // Orange-400
+      case 'TripleKill':
+        return '#f87171'; // Red-400
+      case 'QuadKill':
+        return '#ec4899'; // Pink-500
+      case 'Ace':
+        return '#f59e0b'; // Gold / Amber-500
       case 'Goal':
         return '#eab308'; // Yellow-500
       case 'Assist':

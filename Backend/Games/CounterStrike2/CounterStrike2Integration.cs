@@ -13,6 +13,9 @@ namespace Segra.Backend.Games.CounterStrike2
         private const string Prefix = "http://127.0.0.1:1340/";
         private int _lastValidKills = 0;
         private int _lastValidDeaths = 0;
+        private int _currentRound = -1;
+        private int _roundKills = 0;
+        private string? _lastRoundPhase = null;
         private bool _initialStatsCaptured = false;
 
         private class GameState
@@ -25,6 +28,9 @@ namespace Segra.Backend.Games.CounterStrike2
 
             [System.Text.Json.Serialization.JsonPropertyName("map")]
             public Map? Map { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("round")]
+            public Round? Round { get; set; }
         }
 
         private class Player
@@ -34,6 +40,21 @@ namespace Segra.Backend.Games.CounterStrike2
 
             [System.Text.Json.Serialization.JsonPropertyName("match_stats")]
             public MatchStats? MatchStats { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("state")]
+            public PlayerState? State { get; set; }
+        }
+
+        private class PlayerState
+        {
+            [System.Text.Json.Serialization.JsonPropertyName("health")]
+            public int? Health { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("round_kills")]
+            public int? RoundKills { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("round_killhs")]
+            public int? RoundKillHs { get; set; }
         }
 
         private class Provider
@@ -42,10 +63,25 @@ namespace Segra.Backend.Games.CounterStrike2
             public string? SteamId { get; set; }
         }
 
+        private class Round
+        {
+            [System.Text.Json.Serialization.JsonPropertyName("phase")]
+            public string? Phase { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("win_team")]
+            public string? WinTeam { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("bomb")]
+            public string? Bomb { get; set; }
+        }
+
         private class Map
         {
             [System.Text.Json.Serialization.JsonPropertyName("phase")]
             public string? Phase { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("round")]
+            public int? Round { get; set; }
         }
 
         private class MatchStats
@@ -198,6 +234,27 @@ namespace Segra.Backend.Games.CounterStrike2
             var currentKills = gameState.Player?.MatchStats?.Kills ?? 0;
             var currentDeaths = gameState.Player?.MatchStats?.Deaths ?? 0;
 
+            // Track round changes to reset round kills
+            int? mapRound = gameState.Map?.Round;
+            string? roundPhase = gameState.Round?.Phase;
+
+            if (mapRound.HasValue && mapRound.Value != _currentRound)
+            {
+                Log.Information($"CS2 round changed: {_currentRound} -> {mapRound.Value}");
+                _currentRound = mapRound.Value;
+                _roundKills = 0;
+            }
+
+            if (roundPhase != null && !string.Equals(roundPhase, _lastRoundPhase, StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(roundPhase, "freezetime", StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Information("CS2 round freezetime started, resetting round kills");
+                    _roundKills = 0;
+                }
+                _lastRoundPhase = roundPhase;
+            }
+
             if (!_initialStatsCaptured)
             {
                 Log.Information($"Initial CS2 stats captured: K:{currentKills} D:{currentDeaths}");
@@ -207,11 +264,13 @@ namespace Segra.Backend.Games.CounterStrike2
                 return;
             }
 
-            if (currentDeaths < _lastValidDeaths)
+            if (currentDeaths < _lastValidDeaths || currentKills < _lastValidKills)
             {
                 Log.Information("New game detected, resetting stats");
                 _lastValidKills = currentKills;
                 _lastValidDeaths = currentDeaths;
+                _roundKills = 0;
+                _currentRound = mapRound ?? -1;
                 return;
             }
 
@@ -220,9 +279,43 @@ namespace Segra.Backend.Games.CounterStrike2
                 int killsGained = currentKills - _lastValidKills;
                 Log.Information($"Kill detected: {_lastValidKills} -> {currentKills} (+{killsGained})");
 
-                for (int i = 0; i < killsGained; i++)
+                // If GSI sends round_kills directly from player.state, synchronize with it
+                int? gsiRoundKills = gameState.Player?.State?.RoundKills;
+                int startKills;
+
+                if (gsiRoundKills.HasValue && gsiRoundKills.Value >= killsGained)
                 {
-                    AddBookmark(BookmarkType.Kill);
+                    _roundKills = gsiRoundKills.Value;
+                    startKills = _roundKills - killsGained;
+                }
+                else
+                {
+                    startKills = _roundKills;
+                    _roundKills += killsGained;
+                }
+
+                for (int i = 1; i <= killsGained; i++)
+                {
+                    int currentK = startKills + i;
+                    BookmarkSubtype? subtype = currentK switch
+                    {
+                        2 => BookmarkSubtype.DoubleKill,
+                        3 => BookmarkSubtype.TripleKill,
+                        4 => BookmarkSubtype.QuadKill,
+                        >= 5 => BookmarkSubtype.Ace,
+                        _ => null
+                    };
+
+                    if (subtype == BookmarkSubtype.Ace)
+                    {
+                        Log.Information($"★ ACE DETECTED! ★ Player scored 5+ kills ({currentK}) in round {_currentRound}!");
+                    }
+                    else if (subtype != null)
+                    {
+                        Log.Information($"CS2 Multi-Kill detected: {subtype} ({currentK} kills in round)");
+                    }
+
+                    AddBookmark(BookmarkType.Kill, subtype);
                 }
             }
 
@@ -262,9 +355,9 @@ namespace Segra.Backend.Games.CounterStrike2
             return true;
         }
 
-        private static void AddBookmark(BookmarkType type)
+        private static void AddBookmark(BookmarkType type, BookmarkSubtype? subtype = null)
         {
-            GameIntegrationService.RegisterGameEvent(type, "Counter-Strike 2");
+            GameIntegrationService.RegisterGameEvent(type, "Counter-Strike 2", subtype);
         }
 
         private void EnsureCfgExists()
@@ -327,6 +420,8 @@ namespace Segra.Backend.Games.CounterStrike2
                 "        \"player_id\" \"1\"\n" +
                 "        \"provider\" \"1\"\n" +
                 "        \"map\" \"1\"\n" +
+                "        \"round\" \"1\"\n" +
+                "        \"player_state\" \"1\"\n" +
                 "        \"player_match_stats\" \"1\"\n" +
                 "    }\n" +
                 "}";

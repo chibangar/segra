@@ -93,6 +93,10 @@ export const includeInHighlight = (type: BookmarkType): boolean =>
 
 export enum BookmarkSubtype {
   Headshot = 'Headshot',
+  DoubleKill = 'DoubleKill',
+  TripleKill = 'TripleKill',
+  QuadKill = 'QuadKill',
+  Ace = 'Ace',
 }
 
 export enum HotkeyAction {

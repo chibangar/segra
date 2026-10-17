@@ -67,6 +67,7 @@ namespace Segra.Backend.Recorder
         private static CancellationTokenSource _userStop = new();
 
         public static bool IsAlwaysOnBufferActive => _alwaysOnBuffer != null;
+        internal static Recording? AlwaysOnBuffer => _alwaysOnBuffer;
 
         public static GameCapture? GameCaptureSource { get; set; }
         private static Source? _displaySource;
@@ -186,6 +187,8 @@ namespace Segra.Backend.Recorder
             public string? ExePath { get; init; }
             public List<string>? AudioTrackNames { get; init; }
             public List<string>? AudioTrackTypes { get; init; }
+            public string? Title { get; init; }
+            public BookmarkSubtype? Subtype { get; init; }
             public string? FailureReason;
             public readonly TaskCompletionSource<string?> Signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
@@ -215,7 +218,7 @@ namespace Segra.Backend.Recorder
         private static CancellationTokenSource? _autoClipCts;
         private static readonly object _autoClipLock = new();
 
-        public static void ScheduleAutoClip(BookmarkType type, string? gameName)
+        public static void ScheduleAutoClip(BookmarkType type, string? gameName, BookmarkSubtype? subtype = null)
         {
             if (!Settings.Instance.AutoClipKills || _bufferOutput == null || !_bufferOutput.IsActive)
             {
@@ -233,9 +236,17 @@ namespace Segra.Backend.Recorder
 
                 _autoClipCts = new CancellationTokenSource();
                 var token = _autoClipCts.Token;
-                int delayMs = Math.Clamp((int)(Settings.Instance.HighlightPaddingAfter * 1000), 2000, 10000);
 
-                Log.Information($"Auto-clip scheduled for {type} in {gameName ?? "game"} (waiting {delayMs}ms post-kill padding)");
+                // For an Ace, we want extended post-kill padding (6 seconds) so the round win, anthem and celebration are captured
+                int delayMs = subtype == BookmarkSubtype.Ace
+                    ? 6000
+                    : Math.Clamp((int)(Settings.Instance.HighlightPaddingAfter * 1000), 2000, 10000);
+
+                string? customTitle = subtype == BookmarkSubtype.Ace
+                    ? $"{gameName ?? "Counter-Strike 2"} - ACE"
+                    : null;
+
+                Log.Information($"Auto-clip scheduled for {type} ({subtype}) in {gameName ?? "game"} (waiting {delayMs}ms post-kill padding)");
 
                 Task.Run(async () =>
                 {
@@ -247,8 +258,8 @@ namespace Segra.Backend.Recorder
                         if (token.IsCancellationRequested)
                             return;
 
-                        Log.Information($"Executing auto-clip save for {type} in {gameName ?? "game"}");
-                        await SaveReplayBuffer();
+                        Log.Information($"Executing auto-clip save for {type} ({subtype}) in {gameName ?? "game"}");
+                        await SaveReplayBuffer(customTitle, subtype);
                     }
                     catch (OperationCanceledException)
                     {
@@ -263,7 +274,9 @@ namespace Segra.Backend.Recorder
             }
         }
 
-        public static async Task<bool> SaveReplayBuffer()
+        public static Task<bool> SaveReplayBuffer() => SaveReplayBuffer(null, null);
+
+        public static async Task<bool> SaveReplayBuffer(string? customTitle = null, BookmarkSubtype? subtype = null)
         {
             // One save at a time: OBS defers a save requested while a previous one is still
             // muxing, and its 'saved' signal carries no identity, so correlation is only sound
@@ -285,7 +298,9 @@ namespace Segra.Backend.Recorder
                     IgdbId = !string.IsNullOrEmpty(exePath) ? GameUtils.GetIgdbIdFromExePath(exePath) : null,
                     ExePath = exePath,
                     AudioTrackNames = recording?.AudioTrackNames,
-                    AudioTrackTypes = recording?.AudioTrackTypes
+                    AudioTrackTypes = recording?.AudioTrackTypes,
+                    Title = customTitle,
+                    Subtype = subtype
                 };
 
                 lock (_replaySaveLock)
@@ -329,14 +344,21 @@ namespace Segra.Backend.Recorder
                 // The file is fully written at this point; let the frontend confirm the save.
                 _ = MessageService.SendFrontendMessage("ReplayBufferSaved", new { });
 #if WINDOWS
-                Windows.Display.InGameNotificationService.ShowClipSaved(request.Game);
+                if (request.Subtype == BookmarkSubtype.Ace)
+                {
+                    Windows.Display.InGameNotificationService.ShowAce(request.Game);
+                }
+                else
+                {
+                    Windows.Display.InGameNotificationService.ShowClipSaved(request.Game);
+                }
 #endif
 
                 // Ensure file is fully written to disk/network before thumbnail generation
                 await EnsureFileReady(savedPath);
 
                 // Create metadata for the buffer recording
-                string? bufferId = await ContentService.CreateMetadataFile(savedPath, Content.ContentType.Buffer, request.Game, igdbId: request.IgdbId, audioTrackNames: request.AudioTrackNames, audioTrackTypes: request.AudioTrackTypes, gameExePath: request.ExePath);
+                string? bufferId = await ContentService.CreateMetadataFile(savedPath, Content.ContentType.Buffer, request.Game, title: request.Title, igdbId: request.IgdbId, audioTrackNames: request.AudioTrackNames, audioTrackTypes: request.AudioTrackTypes, gameExePath: request.ExePath);
                 await ContentService.CreateThumbnail(savedPath, Content.ContentType.Buffer, bufferId);
                 await ContentService.CreateWaveformFile(savedPath, Content.ContentType.Buffer, bufferId);
 
@@ -345,6 +367,16 @@ namespace Segra.Backend.Recorder
 
                 if (bufferId != null && recording != null)
                     await AddReplayBookmarks(recording, bufferId, requestedAt);
+
+                if (bufferId != null && request.Subtype == BookmarkSubtype.Ace)
+                {
+                    var content = AppState.Instance.Content.FirstOrDefault(c => c.Id == bufferId);
+                    if (content != null && (content.Bookmarks == null || !content.Bookmarks.Any(b => b.Subtype == BookmarkSubtype.Ace)))
+                    {
+                        var aceTime = content.Duration > TimeSpan.FromSeconds(6) ? content.Duration - TimeSpan.FromSeconds(6) : content.Duration;
+                        await ContentService.AddBookmarks(bufferId, [new Bookmark { Type = BookmarkType.Kill, Subtype = BookmarkSubtype.Ace, Time = aceTime }]);
+                    }
+                }
 
                 Log.Information("Replay buffer save process completed successfully");
 

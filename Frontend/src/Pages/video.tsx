@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
-import { Content, BookmarkType, Segment, Bookmark } from '../Models/types';
+import { Content, BookmarkType, BookmarkSubtype, Segment, Bookmark } from '../Models/types';
 import { sendMessageToBackend } from '../Utils/MessageUtils';
 import { useSettings, useSettingsUpdater } from '../Context/SettingsContext';
 import { useAppState } from '../Context/AppStateContext';
@@ -36,6 +36,7 @@ import {
   ZoomOut,
   Headphones,
   ChevronDown,
+  Star,
 } from 'lucide-react';
 import { Volume1, Volume2, VolumeX, Maximize, Minimize, Copy, Check } from 'lucide';
 import { MorphIcon } from 'morphicons/react';
@@ -2232,8 +2233,10 @@ export default function VideoComponent({ video }: { video: Content }) {
                   {filteredBookmarks.map((bookmark, index) => {
                     const timeInSeconds = timeStringToSeconds(bookmark.time);
                     const leftPos = timeInSeconds * pixelsPerSecond;
-                    const Icon =
-                      getIconMapping(video.igdbId)[bookmark.type as BookmarkType] || Skull;
+                    const isAce = bookmark.subtype === BookmarkSubtype.Ace;
+                    const Icon = isAce
+                      ? Star
+                      : getIconMapping(video.igdbId)[bookmark.type as BookmarkType] || Skull;
 
                     return (
                       <motion.div
@@ -2243,7 +2246,7 @@ export default function VideoComponent({ video }: { video: Content }) {
                         exit={{ opacity: 0, scale: 0.5 }}
                         transition={{ duration: 0.1 }}
                         className="tooltip absolute bottom-0 transform -translate-x-1/2 cursor-pointer z-10 flex flex-col items-center text-[#25272e]"
-                        data-tip={`${bookmark.type}${bookmark.subtype ? ` - ${bookmark.subtype}` : ''} (${bookmark.time})`}
+                        data-tip={isAce ? `★ ACE! ★ (${bookmark.time})` : `${bookmark.type}${bookmark.subtype ? ` - ${bookmark.subtype}` : ''} (${bookmark.time})`}
                         style={{ left: `${leftPos}px` }}
                         onClick={() => {
                           const seekTo = Math.max(
@@ -2260,10 +2263,10 @@ export default function VideoComponent({ video }: { video: Content }) {
                           handleDeleteBookmark(bookmark.id);
                         }}
                       >
-                        <div className="bg-[#EFAF2B] w-[26px] h-[26px] rounded-full flex items-center justify-center mb-0">
-                          <Icon size={18} strokeWidth={2.5} />
+                        <div className={`${isAce ? 'bg-amber-400 text-amber-950 shadow-[0_0_12px_rgba(245,158,11,0.85)] scale-110' : 'bg-[#EFAF2B] text-[#25272e]'} w-[26px] h-[26px] rounded-full flex items-center justify-center mb-0 transition-transform`}>
+                          <Icon size={18} strokeWidth={isAce ? 2.8 : 2.5} className={isAce ? 'fill-amber-950' : ''} />
                         </div>
-                        <div className="w-[2px] h-[16px] bg-[#EFAF2B]" />
+                        <div className={`w-[2px] h-[16px] ${isAce ? 'bg-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.85)]' : 'bg-[#EFAF2B]'}`} />
                       </motion.div>
                     );
                   })}

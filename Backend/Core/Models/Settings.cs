@@ -1269,7 +1269,7 @@ namespace Segra.Backend.Core.Models
 
             if (Settings.Instance.AutoClipKills && (bookmark.Type == BookmarkType.Kill || bookmark.Type == BookmarkType.Goal))
             {
-                Recorder.OBSService.ScheduleAutoClip(bookmark.Type, Game);
+                Recorder.OBSService.ScheduleAutoClip(bookmark.Type, Game, bookmark.Subtype);
             }
         }
 

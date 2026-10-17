@@ -19,6 +19,10 @@ namespace Segra.Backend.Windows.Display
         Bookmark,
         Kill,
         Headshot,
+        DoubleKill,
+        TripleKill,
+        QuadKill,
+        Ace,
         Goal,
         Assist
     }
@@ -77,6 +81,34 @@ namespace Segra.Backend.Windows.Display
             PlaySound();
         }
 
+        public static void ShowAce(string? gameName)
+        {
+            bool isPt = IsPortuguese();
+            string title = "★ ACE! ★";
+            string subtitle = isPt
+                ? "5 Kills na Ronda • Clip Guardado!"
+                : "5 Kills in Round • Clip Saved!";
+            ShowNotification(title, subtitle, InGameNotificationType.Ace);
+            PlaySound();
+        }
+
+        public static void ShowMultiKill(string title, int count, string? gameName)
+        {
+            bool isPt = IsPortuguese();
+            string subtitle = isPt
+                ? $"{count} Kills Seguidas • {gameName ?? "Counter-Strike 2"}"
+                : $"{count} Multi-Kill • {gameName ?? "Counter-Strike 2"}";
+            var notifType = count switch
+            {
+                2 => InGameNotificationType.DoubleKill,
+                3 => InGameNotificationType.TripleKill,
+                4 => InGameNotificationType.QuadKill,
+                _ => InGameNotificationType.Kill
+            };
+            ShowNotification(title, subtitle, notifType);
+            PlaySound();
+        }
+
         public static void ShowKill(string? gameName, bool isHeadshot = false)
         {
             bool isPt = IsPortuguese();
@@ -94,7 +126,26 @@ namespace Segra.Backend.Windows.Display
             switch (type)
             {
                 case BookmarkType.Kill:
-                    ShowKill(gameName, subtype == BookmarkSubtype.Headshot);
+                    if (subtype == BookmarkSubtype.Ace)
+                    {
+                        ShowAce(gameName);
+                    }
+                    else if (subtype == BookmarkSubtype.DoubleKill)
+                    {
+                        ShowMultiKill("DOUBLE KILL!", 2, gameName);
+                    }
+                    else if (subtype == BookmarkSubtype.TripleKill)
+                    {
+                        ShowMultiKill("TRIPLE KILL!", 3, gameName);
+                    }
+                    else if (subtype == BookmarkSubtype.QuadKill)
+                    {
+                        ShowMultiKill("QUAD KILL!", 4, gameName);
+                    }
+                    else
+                    {
+                        ShowKill(gameName, subtype == BookmarkSubtype.Headshot);
+                    }
                     break;
                 case BookmarkType.Goal:
                     string goalSubtitle = Settings.Instance.AutoClipKills
@@ -394,6 +445,10 @@ namespace Segra.Backend.Windows.Display
                     InGameNotificationType.Bookmark => Color.FromArgb(245, 158, 11),   // Amber-500
                     InGameNotificationType.Kill => Color.FromArgb(239, 68, 68),       // Red / Rose-500
                     InGameNotificationType.Headshot => Color.FromArgb(249, 115, 22),   // Orange-500
+                    InGameNotificationType.DoubleKill => Color.FromArgb(251, 146, 60), // Orange-400
+                    InGameNotificationType.TripleKill => Color.FromArgb(248, 113, 113),// Red-400
+                    InGameNotificationType.QuadKill => Color.FromArgb(236, 72, 153),  // Pink-500
+                    InGameNotificationType.Ace => Color.FromArgb(245, 158, 11),       // Gold / Amber-500
                     InGameNotificationType.Goal => Color.FromArgb(234, 179, 8),       // Yellow-500
                     InGameNotificationType.Assist => Color.FromArgb(168, 85, 247),     // Purple-500
                     _ => Color.FromArgb(56, 189, 248)
