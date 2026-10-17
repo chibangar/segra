@@ -66,6 +66,7 @@ namespace Segra.Backend.Core.Models
         private WindowState? _lastWindowState = null;
         private bool _enableAi = true;
         private bool _autoGenerateHighlights = true;
+        private bool _autoClipKills = true;
         private double _highlightPaddingBefore = 4;
         private double _highlightPaddingAfter = 4;
         private bool _runOnStartup = false;
@@ -420,6 +421,19 @@ namespace Segra.Backend.Core.Models
                 if (_autoGenerateHighlights != value)
                 {
                     _autoGenerateHighlights = value;
+                }
+            }
+        }
+
+        [JsonPropertyName("autoClipKills")]
+        public bool AutoClipKills
+        {
+            get => _autoClipKills;
+            set
+            {
+                if (_autoClipKills != value)
+                {
+                    _autoClipKills = value;
                 }
             }
         }
@@ -1252,6 +1266,11 @@ namespace Segra.Backend.Core.Models
                 Log.Warning($"Failed to show in-game notification: {ex.Message}");
             }
 #endif
+
+            if (Settings.Instance.AutoClipKills && (bookmark.Type == BookmarkType.Kill || bookmark.Type == BookmarkType.Goal))
+            {
+                Recorder.OBSService.ScheduleAutoClip(bookmark.Type, Game);
+            }
         }
 
         public List<Bookmark> GetBookmarks()

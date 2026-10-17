@@ -192,6 +192,16 @@ namespace Segra.Backend.Windows.Display
             [DllImport("user32.dll")]
             private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+            [DllImport("user32.dll")]
+            private static extern IntPtr GetForegroundWindow();
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+            private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+            private const uint SWP_NOACTIVATE = 0x0010;
+            private const uint SWP_SHOWWINDOW = 0x0040;
+
             private const int SW_SHOWNOACTIVATE = 4;
             private const int WS_EX_TOPMOST = 0x00000008;
             private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -278,7 +288,11 @@ namespace Segra.Backend.Windows.Display
             {
                 try
                 {
-                    var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+                    IntPtr fg = GetForegroundWindow();
+                    Screen screen = (fg != IntPtr.Zero)
+                        ? Screen.FromHandle(fg)
+                        : (Screen.PrimaryScreen ?? Screen.AllScreens.FirstOrDefault()!);
+                    var area = screen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
                     int padX = 24;
                     int padY = 24;
 
@@ -286,21 +300,21 @@ namespace Segra.Backend.Windows.Display
                     switch (Settings.Instance.InGameNotificationPosition)
                     {
                         case InGameNotificationPosition.TopLeft:
-                            x = screen.Left + padX;
-                            y = screen.Top + padY;
+                            x = area.Left + padX;
+                            y = area.Top + padY;
                             break;
                         case InGameNotificationPosition.BottomLeft:
-                            x = screen.Left + padX;
-                            y = screen.Bottom - Height - padY;
+                            x = area.Left + padX;
+                            y = area.Bottom - Height - padY;
                             break;
                         case InGameNotificationPosition.BottomRight:
-                            x = screen.Right - Width - padX;
-                            y = screen.Bottom - Height - padY;
+                            x = area.Right - Width - padX;
+                            y = area.Bottom - Height - padY;
                             break;
                         case InGameNotificationPosition.TopRight:
                         default:
-                            x = screen.Right - Width - padX;
-                            y = screen.Top + padY;
+                            x = area.Right - Width - padX;
+                            y = area.Top + padY;
                             break;
                     }
 
@@ -322,6 +336,9 @@ namespace Segra.Backend.Windows.Display
                 _subtitle = subtitle;
                 _type = type;
                 _ticks = 0;
+
+                ShowWindow(Handle, SW_SHOWNOACTIVATE);
+                SetWindowPos(Handle, HWND_TOPMOST, Location.X, Location.Y, Width, Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
                 if (_animTimer != null && !_animTimer.Enabled)
                 {

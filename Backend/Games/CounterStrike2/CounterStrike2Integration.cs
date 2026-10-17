@@ -265,19 +265,27 @@ namespace Segra.Backend.Games.CounterStrike2
         private static void AddBookmark(BookmarkType type)
         {
             var recording = AppState.Instance.Recording;
-            if (recording == null)
+            if (recording != null)
             {
-                Log.Debug($"No recording active, skipping {type} bookmark");
-                return;
+                var bookmark = new Bookmark
+                {
+                    Type = type,
+                    Time = DateTime.Now - recording.StartTime
+                };
+                recording.AddBookmark(bookmark);
+                Log.Information($"Added {type} bookmark at {bookmark.Time}");
             }
-
-            var bookmark = new Bookmark
+            else
             {
-                Type = type,
-                Time = DateTime.Now - recording.StartTime
-            };
-            recording.AddBookmark(bookmark);
-            Log.Information($"Added {type} bookmark at {bookmark.Time}");
+                Log.Information($"Event {type} detected while recording object is null, showing notification and triggering auto-clip");
+#if WINDOWS
+                Windows.Display.InGameNotificationService.ShowEvent(type, null, "Counter-Strike 2");
+#endif
+                if (Settings.Instance.AutoClipKills && (type == BookmarkType.Kill || type == BookmarkType.Goal))
+                {
+                    Recorder.OBSService.ScheduleAutoClip(type, "Counter-Strike 2");
+                }
+            }
         }
 
         private void EnsureCfgExists()

@@ -212,6 +212,56 @@ namespace Segra.Backend.Recorder
                 SingleWriter = false
             });
 
+        private static CancellationTokenSource? _autoClipCts;
+        private static readonly object _autoClipLock = new();
+
+        public static void ScheduleAutoClip(BookmarkType type, string? gameName)
+        {
+            if (!Settings.Instance.AutoClipKills || _bufferOutput == null || !_bufferOutput.IsActive)
+            {
+                return;
+            }
+
+            lock (_autoClipLock)
+            {
+                try
+                {
+                    _autoClipCts?.Cancel();
+                    _autoClipCts?.Dispose();
+                }
+                catch { }
+
+                _autoClipCts = new CancellationTokenSource();
+                var token = _autoClipCts.Token;
+
+                Log.Information($"Auto-clip scheduled for {type} in {gameName ?? "game"} (waiting 3.5s post-kill padding)");
+
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Wait 3.5s so the replay buffer captures the kill and post-kill reaction
+                        await Task.Delay(3500, token);
+
+                        if (token.IsCancellationRequested)
+                            return;
+
+                        Log.Information($"Executing auto-clip save for {type} in {gameName ?? "game"}");
+                        await SaveReplayBuffer();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Another kill happened within 3.5s, extending the clip
+                        Log.Information("Auto-clip timer extended by another kill/event (multi-kill)");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Failed to execute auto-clip");
+                    }
+                }, token);
+            }
+        }
+
         public static async Task<bool> SaveReplayBuffer()
         {
             // One save at a time: OBS defers a save requested while a previous one is still
@@ -1674,7 +1724,7 @@ namespace Segra.Backend.Recorder
             string? videoOutputPath = null; // only set for session/hybrid session output
 
             // Configure outputs depending on mode
-            if (isReplayBufferMode || isHybridMode)
+            if (isReplayBufferMode || isHybridMode || Settings.Instance.AutoClipKills)
             {
                 uint bufferTracksMask = trackCount >= 32 ? uint.MaxValue : (1u << trackCount) - 1u;
 

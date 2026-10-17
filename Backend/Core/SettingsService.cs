@@ -762,6 +762,13 @@ namespace Segra.Backend.Core
                 hasChanges = true;
             }
 
+            if (settings.AutoClipKills != updatedSettings.AutoClipKills)
+            {
+                Log.Information($"AutoClipKills changed from '{settings.AutoClipKills}' to '{updatedSettings.AutoClipKills}'");
+                settings.AutoClipKills = updatedSettings.AutoClipKills;
+                hasChanges = true;
+            }
+
             if (settings.HighlightPaddingBefore != updatedSettings.HighlightPaddingBefore)
             {
                 Log.Information($"HighlightPaddingBefore changed from '{settings.HighlightPaddingBefore}' to '{updatedSettings.HighlightPaddingBefore}'");

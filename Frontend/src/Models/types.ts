@@ -364,6 +364,7 @@ export interface Settings {
   confirmBeforeDeleting: boolean;
   removeOriginalAfterCompression: boolean;
   discardSessionsWithoutBookmarks: boolean;
+  autoClipKills?: boolean;
   menuItems: MenuItemPreference[];
   defaultMenuItem: MenuItemId;
 }
@@ -456,6 +457,7 @@ export const initialSettings: Settings = {
   confirmBeforeDeleting: false,
   removeOriginalAfterCompression: false,
   discardSessionsWithoutBookmarks: false,
+  autoClipKills: true,
   menuItems: DEFAULT_MENU_ITEMS,
   defaultMenuItem: 'Full Sessions',
   keybindings: [

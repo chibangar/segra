@@ -146,6 +146,9 @@ export const ptPT: Translations = {
       alwaysOnReplayBufferDesc:
         'Mantém um buffer de repetição do seu ecrã ativo quando nenhum jogo está a gravar. Prima {hotkey} para guardar os últimos {bufferLength} como recorte.',
       saveHotkeyFallback: 'o atalho de Guardar Buffer de Repetição',
+      autoClipKills: 'Clipar Automaticamente Kills e Tiros (Estilo Medal)',
+      autoClipKillsDesc:
+        'Guarda automaticamente um clip sempre que fazes uma kill ou eliminação no jogo (CS2, Valorant, etc.). Não precisas de carregar em nenhuma tecla.',
     },
     video: {
       title: 'Definições de Vídeo',

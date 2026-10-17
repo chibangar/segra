@@ -114,6 +114,23 @@ export default function CaptureModeSection({ settings, updateSettings }: Capture
           </div>
         </div>
       </label>
+      <label className="flex items-center gap-3 cursor-pointer p-3 bg-base-200 rounded-lg border border-base-400 mt-3">
+        <input
+          type="checkbox"
+          className="checkbox checkbox-primary checkbox-sm"
+          checked={settings.autoClipKills ?? true}
+          onChange={(e) => updateSettings({ autoClipKills: e.target.checked })}
+        />
+        <div>
+          <div className="font-semibold flex items-center gap-2">
+            <span>{t('settings.captureMode.autoClipKills')}</span>
+            <span className="badge badge-primary badge-sm">Auto-Clip</span>
+          </div>
+          <div className="text-sm opacity-70 mt-0.5">
+            {t('settings.captureMode.autoClipKillsDesc')}
+          </div>
+        </div>
+      </label>
     </div>
   );
 }

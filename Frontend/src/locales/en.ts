@@ -141,6 +141,9 @@ export const en = {
       alwaysOnReplayBufferDesc:
         'Keeps a replay buffer of your display running when no game is recording. Press {hotkey} to save the last {bufferLength} as a clip.',
       saveHotkeyFallback: 'the Save Replay Buffer hotkey',
+      autoClipKills: 'Auto-Clip Kills & Shots (Medal style)',
+      autoClipKillsDesc:
+        'Automatically saves a clip whenever you get a kill or elimination in supported games (CS2, Valorant, etc.). No hotkey press needed.',
     },
     video: {
       title: 'Video Settings',
