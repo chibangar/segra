@@ -121,10 +121,67 @@ if (feedbackForm) {
 for (const media of document.querySelectorAll('.demo-media')) {
  const video = media.querySelector('video');
  const button = media.querySelector('.demo-start');
- button.addEventListener('click', async () => {
-  try { await video.play(); button.hidden = true; }
-  catch { button.setAttribute('aria-label','Tentar reproduzir novamente'); }
+ const sound = document.createElement('button');
+ sound.type = 'button'; sound.className = 'demo-sound';
+ media.append(sound);
+ video.volume = 0.15;
+ video.loop = true;
+ video.preload = 'metadata';
+ // Only the presentation attempts audible autoplay; other previews stay silent.
+ video.muted = media !== document.querySelector('.demo-media');
+ let inView = false;
+ let userPaused = false;
+ let automaticPause = false;
+ let starting = false;
+ const syncSound = () => {
+  const silent = video.muted || video.volume === 0;
+  if (!silent) document.querySelectorAll('.demo-media video').forEach(other => {
+   if (other !== video && !other.muted) other.muted = true;
+  });
+  sound.textContent = silent ? 'Ativar som (baixo)' : 'Silenciar';
+  sound.title = silent ? 'Som desligado' : `Volume: ${Math.round(video.volume * 100)}%`;
+  sound.setAttribute('aria-label', `${silent ? 'Ativar som baixo' : 'Silenciar'}: ${video.getAttribute('aria-label')}`);
+ };
+ syncSound();
+ video.addEventListener('volumechange', syncSound);
+ const pausePreview = () => {
+  if (!video.paused) { automaticPause = true; video.pause(); }
+ };
+ const startPreview = async () => {
+  if (starting || !video.paused) return;
+  starting = true;
+  try { await video.play(); }
+  catch (error) {
+   if (error.name === 'NotAllowedError' && !video.muted) {
+    video.muted = true;
+    try { await video.play(); } catch { button.hidden = false; }
+   } else if (error.name !== 'AbortError') { button.hidden = false; }
+  } finally { starting = false; syncSound(); }
+ };
+ sound.addEventListener('click', () => {
+  if (video.muted || video.volume === 0) {
+   video.volume = 0.15; video.muted = false; userPaused = false;
+   startPreview();
+  } else { video.muted = true; }
+  syncSound();
  });
- video.addEventListener('playing', () => { button.hidden = true; });
- video.addEventListener('ended', () => { button.hidden = false; });
+ button.addEventListener('click', async () => {
+  userPaused = false;
+  await startPreview();
+ });
+ video.addEventListener('playing', () => { button.hidden = true; userPaused = false; });
+ video.addEventListener('pause', () => {
+  if (automaticPause) automaticPause = false;
+  else if (!starting && !video.ended) userPaused = true;
+ });
+ const observer = new IntersectionObserver(entries => {
+  inView = entries[0].isIntersecting;
+  if (inView && !document.hidden && !userPaused) startPreview();
+  else if (!inView) pausePreview();
+ }, { threshold: 0.25 });
+ observer.observe(video);
+ document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pausePreview();
+  else if (inView && !userPaused) startPreview();
+ });
 }
