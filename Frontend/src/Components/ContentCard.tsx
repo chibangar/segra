@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useSettings } from '../Context/SettingsContext';
 import { useAppState, usePatchContent } from '../Context/AppStateContext';
 import { BookmarkType, BookmarkSubtype, Content, includeInHighlight } from '../Models/types';
@@ -79,9 +80,7 @@ export default function ContentCard({
     ? compressionProgress[content.filePath]
     : undefined;
 
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const dropdownTriggerRef = useRef<HTMLLabelElement>(null);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const threeDotsButtonRef = useRef<HTMLButtonElement>(null);
   const [copied, setCopied] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -95,9 +94,8 @@ export default function ContentCard({
   const cardRef = useRef<HTMLDivElement>(null);
   // Card height while collapsed to a placeholder, or null when fully rendered.
   const [placeholderHeight, setPlaceholderHeight] = useState<number | null>(null);
-  // An open menu opts the card out, so the dropdown/context menu never unmounts mid-use.
-  const showPlaceholder =
-    placeholderHeight !== null && !isDropdownOpen && contextMenuPosition === null;
+  // An open menu opts the card out, so the context menu never unmounts mid-use.
+  const showPlaceholder = placeholderHeight !== null && contextMenuPosition === null;
 
   useEffect(() => {
     const el = cardRef.current;
@@ -150,31 +148,6 @@ export default function ContentCard({
     }
   }, [markThumbnailLoaded]);
 
-  const updateDropdownPosition = useCallback(() => {
-    if (dropdownRef.current) {
-      const rect = dropdownRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      // If less than 245px below, open upward
-      if (spaceBelow < 245) {
-        dropdownRef.current.classList.add('dropdown-top');
-      } else {
-        dropdownRef.current.classList.remove('dropdown-top');
-      }
-    }
-  }, []);
-
-  // Update position on scroll/resize while dropdown is open
-  useEffect(() => {
-    if (!isDropdownOpen) return;
-    const handler = () => updateDropdownPosition();
-    window.addEventListener('resize', handler);
-    window.addEventListener('scroll', handler, true); // Capture phase for parent scrolling
-    return () => {
-      window.removeEventListener('resize', handler);
-      window.removeEventListener('scroll', handler, true);
-    };
-  }, [isDropdownOpen, updateDropdownPosition]);
-
   if (isLoading) {
     // Render a skeleton card
     return (
@@ -189,9 +162,7 @@ export default function ContentCard({
           <div className="absolute inset-0 rounded-2xl highlight-border">
             <div className="absolute inset-px bg-[#121620] rounded-2xl overflow-hidden z-2">
               <figure className="relative aspect-video">
-                <div
-                  className="skeleton w-full h-full bg-white/5"
-                ></div>
+                <div className="skeleton w-full h-full bg-white/5"></div>
               </figure>
               <div className="p-3 text-gray-300">
                 {/* Title Skeleton */}
@@ -397,14 +368,7 @@ export default function ContentCard({
     };
   }, []);
 
-  const openContextMenu = (event: React.MouseEvent) => {
-    if (isBeingCompressed) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    (document.activeElement as HTMLElement | null)?.blur();
-    window.dispatchEvent(new Event('segra:close-content-context-menus'));
-
+  const getMenuDimensions = useCallback(() => {
     const menuWidth = 208;
     const actionCount =
       3 +
@@ -413,10 +377,63 @@ export default function ContentCard({
       (type === 'Session' && enableAi ? 1 : 0) +
       ((type === 'Clip' || type === 'Highlight') && !content?.compressed ? 1 : 0);
     const menuHeight = actionCount * 40 + 16;
+    return { menuWidth, menuHeight };
+  }, [airplaneMode, content?.compressed, enableAi, type]);
+
+  const openContextMenu = (event: React.MouseEvent) => {
+    if (isBeingCompressed) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    (document.activeElement as HTMLElement | null)?.blur();
+    window.dispatchEvent(new Event('segra:close-content-context-menus'));
+
+    const { menuWidth, menuHeight } = getMenuDimensions();
     setContextMenuPosition({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
     });
+  };
+
+  const handleThreeDotsClick = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (isBeingCompressed) return;
+
+    if (contextMenuPosition) {
+      setContextMenuPosition(null);
+      return;
+    }
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    window.dispatchEvent(new Event('segra:close-content-context-menus'));
+
+    const rect = threeDotsButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const { menuWidth, menuHeight } = getMenuDimensions();
+
+    let x = rect.right - menuWidth;
+    x = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    let y: number;
+    if (spaceBelow >= menuHeight + 8) {
+      y = rect.bottom + 4;
+    } else if (rect.top >= menuHeight + 8) {
+      y = rect.top - menuHeight - 4;
+    } else {
+      y = Math.max(8, window.innerHeight - menuHeight - 8);
+    }
+
+    setContextMenuPosition({ x, y });
+  };
+
+  const handleThreeDotsContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handleThreeDotsClick(event);
   };
 
   const uploadUrl = content?.uploadUrl;
@@ -675,46 +692,20 @@ export default function ContentCard({
               {content!.title || content!.game || 'Untitled'}
             </h2>
           )}
-          <div
-            ref={dropdownRef}
-            className={`dropdown dropdown-end shrink-0 ${isBeingCompressed ? 'pointer-events-none opacity-50' : ''}`}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.stopPropagation();
-                (document.activeElement as HTMLElement | null)?.blur();
-              }
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              dropdownTriggerRef.current?.focus();
-            }}
-            onFocus={() => {
-              window.dispatchEvent(new Event('segra:close-content-context-menus'));
-              updateDropdownPosition();
-              setIsDropdownOpen(true);
-            }}
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget)) {
-                setIsDropdownOpen(false);
-              }
-            }}
+          <button
+            type="button"
+            ref={threeDotsButtonRef}
+            disabled={isBeingCompressed}
+            className={`btn btn-ghost btn-xs btn-circle hover:text-white hover:bg-white/10 active:bg-white/10 disabled:opacity-50 shrink-0 cursor-pointer ${
+              contextMenuPosition ? 'text-white bg-white/10' : 'text-gray-400'
+            }`}
+            onClick={handleThreeDotsClick}
+            onContextMenu={handleThreeDotsContextMenu}
+            title={language === 'pt-PT' ? 'Mais opções' : 'More options'}
+            aria-label={language === 'pt-PT' ? 'Mais opções' : 'More options'}
           >
-            <label
-              ref={dropdownTriggerRef}
-              tabIndex={isBeingCompressed ? -1 : 0}
-              className="btn btn-ghost btn-xs btn-circle text-gray-400 hover:text-white hover:bg-white/10 active:bg-white/10"
-            >
-              <Ellipsis size={18} />
-            </label>
-            <ul
-              tabIndex={0}
-              className="dropdown-content menu bg-[#121620] border border-white/[0.09] rounded-xl shadow-2xl z-999 w-52 p-1.5"
-            >
-              {renderMenuItems(() => (document.activeElement as HTMLElement).blur())}
-            </ul>
-          </div>
+            <Ellipsis size={18} />
+          </button>
         </div>
 
         <div className="text-xs text-gray-400 flex items-center justify-between w-full min-w-0">
@@ -758,15 +749,21 @@ export default function ContentCard({
         </div>
       </div>
 
-      {contextMenuPosition && (
-        <ul
-          className="menu fixed z-1000 w-52 rounded-xl border border-white/[0.09] bg-[#121620] p-1.5 shadow-2xl"
-          style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {renderMenuItems(() => setContextMenuPosition(null))}
-        </ul>
-      )}
+      {contextMenuPosition &&
+        createPortal(
+          <ul
+            className="menu fixed z-[1000] w-52 rounded-xl border border-white/[0.09] bg-[#121620] p-1.5 shadow-2xl"
+            style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            {renderMenuItems(() => setContextMenuPosition(null))}
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }
