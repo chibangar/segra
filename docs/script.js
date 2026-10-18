@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   init3DCardTilt();
   initInteractiveClipDemo();
   initParallaxEffects();
+  initDiscordCounter();
 });
 
 /* ==========================================================================
@@ -443,4 +444,54 @@ function initParallaxEffects() {
       el.style.transform = `translateY(${offset}px)`;
     });
   }, { passive: true });
+}
+
+/* ==========================================================================
+   9. DISCORD LIVE MEMBER COUNTER
+   ========================================================================== */
+
+function initDiscordCounter() {
+  const onlineEl = document.getElementById('discordOnline');
+  const totalEl = document.getElementById('discordTotal');
+  if (!onlineEl || !totalEl) return;
+
+  async function fetchDiscordCounts() {
+    try {
+      const res = await fetch('https://discord.com/api/v10/invites/sjM6pyMEf?with_counts=true');
+      if (!res.ok) return;
+      const data = await res.json();
+      const online = data.approximate_presence_count || 0;
+      const total = data.approximate_member_count || 0;
+
+      animateCounterValue(onlineEl, online);
+      animateCounterValue(totalEl, total);
+    } catch (e) {
+      // Silently fail — keep showing "—"
+    }
+  }
+
+  function animateCounterValue(el, target) {
+    const current = parseInt(el.textContent) || 0;
+    if (current === target) return;
+
+    const duration = 800;
+    const startTime = performance.now();
+    const startVal = current;
+
+    function tick(now) {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const value = Math.round(startVal + (target - startVal) * eased);
+      el.textContent = value.toLocaleString('pt-PT');
+      if (progress < 1) requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(tick);
+  }
+
+  // Fetch immediately, then every 60 seconds
+  fetchDiscordCounts();
+  setInterval(fetchDiscordCounts, 60000);
 }

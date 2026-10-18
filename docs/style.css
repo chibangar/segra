@@ -1544,6 +1544,74 @@ kbd {
   margin-bottom: 18px;
 }
 
+/* Discord Live Counters */
+.discord-counters {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 28px;
+  padding: 16px 32px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: inline-flex;
+}
+
+.discord-counter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.counter-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.counter-dot-green {
+  background: #23a55a;
+  box-shadow: 0 0 8px rgba(35, 165, 90, 0.6);
+  animation: counterPulse 2s ease-in-out infinite;
+}
+
+.counter-dot-gray {
+  background: #80848e;
+  box-shadow: 0 0 6px rgba(128, 132, 142, 0.3);
+}
+
+@keyframes counterPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(35, 165, 90, 0.6); }
+  50% { opacity: 0.6; box-shadow: 0 0 14px rgba(35, 165, 90, 0.9); }
+}
+
+.counter-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.5px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.counter-label {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.counter-separator {
+  width: 1px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .discord-desc {
   font-size: 1.15rem;
   color: #cbd5e1;
