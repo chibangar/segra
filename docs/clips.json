@@ -1,0 +1,62 @@
+[
+  {
+    "id": "mirage-ak",
+    "title": "Entrada no B de AK-47",
+    "map": "Mirage",
+    "weapon": "AK-47",
+    "start": 12,
+    "duration": 16,
+    "description": "Uma sequência de eliminações no bombsite B, entre o mercado e a carrinha.",
+    "source": "2026-10-17_16-47-24.mp4",
+    "video": "videos/highlights/mirage-ak.mp4",
+    "poster": "assets/mirage-ak.jpg",
+    "date": "2026-10-17",
+    "quality": "720p · 60 FPS",
+    "originalQuality": "1440p · 60 FPS"
+  },
+  {
+    "id": "mirage-deagle",
+    "title": "Desert Eagle no A",
+    "map": "Mirage",
+    "weapon": "Desert Eagle",
+    "start": 11,
+    "duration": 16,
+    "description": "Do ticket ao bombsite A: precisão de pistola para travar o avanço.",
+    "source": "2026-10-17_18-27-44.mp4",
+    "video": "videos/highlights/mirage-deagle.mp4",
+    "poster": "assets/mirage-deagle.jpg",
+    "date": "2026-10-17",
+    "quality": "720p · 60 FPS",
+    "originalQuality": "1440p · 60 FPS"
+  },
+  {
+    "id": "mirage-usp",
+    "title": "USP-S para fechar a ronda",
+    "map": "Mirage",
+    "weapon": "USP-S",
+    "start": 12,
+    "duration": 14,
+    "description": "Saída do CT, duelo nas escadas e a confirmação de ronda vencida.",
+    "source": "2026-10-17_16-22-19.mp4",
+    "video": "videos/highlights/mirage-usp.mp4",
+    "poster": "assets/mirage-usp.jpg",
+    "date": "2026-10-17",
+    "quality": "720p · 60 FPS",
+    "originalQuality": "1440p · 60 FPS"
+  },
+  {
+    "id": "dust2-m4",
+    "title": "À espera nas portas do Long",
+    "map": "Dust II",
+    "weapon": "M4A1-S",
+    "start": 17,
+    "duration": 12,
+    "description": "Paciência nas portas grandes, seguida de uma eliminação de M4A1-S.",
+    "source": "2026-10-17_17-20-45.mp4",
+    "video": "videos/highlights/dust2-m4.mp4",
+    "poster": "assets/dust2-m4.jpg",
+    "date": "2026-10-17",
+    "quality": "720p · 60 FPS",
+    "originalQuality": "1440p · 60 FPS"
+  }
+]
