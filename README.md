@@ -32,6 +32,10 @@
 
 ---
 
+## FiveM on Windows
+
+FiveM is already recognised by the game catalogue and uses the GTA integration (Settings → Game integrations → Grand Theft Auto). Session recording and replay-buffer hotkeys are available. Automatic event recognition is HUD-dependent: the current GTA integration detects the on-screen “WASTED” death message, so custom FiveM/RP server interfaces may not produce automatic bookmarks.
+
 ## Why "Segra"?  
 **Segra** (pronounced *"say-grah"*) means **"to win"** in Swedish. We built Segra to help you preserve those moments: the chaotic fun with friends, the clutch plays, and the wins (*segra!*) that deserve their own highlight reel.  
 
