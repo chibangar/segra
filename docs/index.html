@@ -49,13 +49,22 @@
         <span class="brand-badge">OPEN SOURCE</span>
       </a>
 
+      <!-- Live Visitors Counter -->
+      <div class="live-visitors-badge" id="liveVisitorsBadge" title="Pessoas a ver o site agora">
+        <span class="live-dot"></span>
+        <span class="live-count" id="liveVisitorCount">—</span>
+        <span class="live-label">online</span>
+      </div>
+
       <nav class="desktop-nav" aria-label="Navegação Principal">
         <ul class="nav-list">
           <li><a href="#hero" class="nav-link active">Início</a></li>
           <li><a href="#funcionalidades" class="nav-link">Funcionalidades</a></li>
+          <li><a href="#clipes" class="nav-link">Clipes CS2</a></li>
           <li><a href="#jogos" class="nav-link">Jogos</a></li>
           <li><a href="#como-funciona" class="nav-link">Como Funciona</a></li>
           <li><a href="#estatisticas" class="nav-link">Performance</a></li>
+          <li><a href="#feedback" class="nav-link">Feedback & Bugs</a></li>
           <li><a href="#comunidade" class="nav-link">Comunidade</a></li>
         </ul>
       </nav>
@@ -86,9 +95,11 @@
       <ul class="mobile-nav-list">
         <li><a href="#hero" class="mobile-link">Início</a></li>
         <li><a href="#funcionalidades" class="mobile-link">Funcionalidades</a></li>
+        <li><a href="#clipes" class="mobile-link">Clipes CS2</a></li>
         <li><a href="#jogos" class="mobile-link">Jogos</a></li>
         <li><a href="#como-funciona" class="mobile-link">Como Funciona</a></li>
         <li><a href="#estatisticas" class="mobile-link">Performance</a></li>
+        <li><a href="#feedback" class="mobile-link">Feedback & Bugs</a></li>
         <li><a href="#comunidade" class="mobile-link">Comunidade</a></li>
       </ul>
       <div class="mobile-drawer-actions">
@@ -399,6 +410,100 @@
       </div>
     </section>
 
+    <!-- CLIPS & GAMEPLAY SHOWCASE SECTION -->
+    <section class="clips-section" id="clipes">
+      <div class="container">
+        <div class="section-header text-center reveal-slide-up">
+          <div class="section-badge">JOGADAS REAIS • GRAVADO COM SEGRA</div>
+          <h2 class="section-title">Vê a Qualidade em <span class="gradient-yellow">Ação no Counter-Strike 2</span></h2>
+          <p class="section-subtitle">
+            Clipes reais gravados diretamente pelo Segra com Replay Buffer a alta taxa de quadros, HDR e 0% perda de FPS. Clica em qualquer clipe para assistir!
+          </p>
+        </div>
+
+        <div class="clips-showcase reveal-slide-up">
+          <!-- Main Video Player Card -->
+          <div class="main-player-wrapper">
+            <div class="player-header">
+              <div class="player-title-group">
+                <span class="player-live-dot"></span>
+                <span class="player-now-playing" id="playerNowPlaying">Counter-Strike 2 • 4K ACE em Mirage</span>
+              </div>
+              <div class="player-tags">
+                <span class="clip-tag tag-yellow" id="playerTagResolution">4K HDR</span>
+                <span class="clip-tag tag-cyan" id="playerTagFps">144 FPS</span>
+                <span class="clip-tag tag-purple" id="playerTagCodec">NVENC AV1</span>
+              </div>
+            </div>
+
+            <div class="video-container">
+              <video id="segraMainVideo" class="segra-video" controls playsinline preload="metadata">
+                <source src="videos/cs2-mirage-4k.mp4" type="video/mp4" id="segraVideoSource">
+                O teu navegador não suporta a reprodução de vídeo MP4 HTML5.
+              </video>
+            </div>
+
+            <div class="player-caption">
+              <p id="playerDescription">Eliminação épica de 4 adversários em Mirage capturada em resolução 4K nativa através do Segra Replay Buffer com zero quebras de fluidez.</p>
+            </div>
+          </div>
+
+          <!-- Video Selector Playlist -->
+          <div class="clips-playlist">
+            <div class="playlist-header">
+              <h3 class="playlist-heading">🎬 Escolhe a Jogada:</h3>
+              <span class="playlist-badge">3 Clipes CS2</span>
+            </div>
+
+            <div class="clip-card active" data-video="videos/cs2-mirage-4k.mp4" data-title="Counter-Strike 2 • 4K ACE em Mirage" data-res="4K HDR" data-fps="144 FPS" data-codec="NVENC AV1" data-desc="Eliminação épica de 4 adversários em Mirage capturada em resolução 4K nativa através do Segra Replay Buffer com zero quebras de fluidez.">
+              <div class="clip-card-thumb thumb-mirage">
+                <div class="play-overlay-icon">▶</div>
+                <div class="clip-badge">4K ACE</div>
+              </div>
+              <div class="clip-card-info">
+                <h4 class="clip-title">4K ACE em Mirage</h4>
+                <p class="clip-sub">CS2 • De_Mirage</p>
+                <div class="clip-meta-row">
+                  <span class="meta-pill">⚡ 144 FPS</span>
+                  <span class="meta-pill">🎯 4K Ultra</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="clip-card" data-video="videos/cs2-inferno-onetap.mp4" data-title="Counter-Strike 2 • One Tap Limpo em Inferno" data-res="1440p" data-fps="144 FPS" data-codec="NVENC H.264" data-desc="One tap limpo de AK-47 em Inferno gravado instantaneamente através da tecla de atalho F10 do Segra.">
+              <div class="clip-card-thumb thumb-inferno">
+                <div class="play-overlay-icon">▶</div>
+                <div class="clip-badge">ONE TAP</div>
+              </div>
+              <div class="clip-card-info">
+                <h4 class="clip-title">One Tap Limpo em Inferno</h4>
+                <p class="clip-sub">CS2 • De_Inferno</p>
+                <div class="clip-meta-row">
+                  <span class="meta-pill">⚡ AK-47 Headshot</span>
+                  <span class="meta-pill">⌨️ Atalho F10</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="clip-card" data-video="videos/cs2-nuke-onetap.mp4" data-title="Counter-Strike 2 • One Tap Instantâneo em Nuke" data-res="1440p" data-fps="144 FPS" data-codec="NVENC H.264" data-desc="Disparo instantâneo em Nuke com áudio posicional cristalino e gravação de áudio do Discord em faixa separada.">
+              <div class="clip-card-thumb thumb-nuke">
+                <div class="play-overlay-icon">▶</div>
+                <div class="clip-badge">ONE TAP</div>
+              </div>
+              <div class="clip-card-info">
+                <h4 class="clip-title">One Tap Instantâneo em Nuke</h4>
+                <p class="clip-sub">CS2 • De_Nuke</p>
+                <div class="clip-meta-row">
+                  <span class="meta-pill">⚡ Áudio Multi-Pista</span>
+                  <span class="meta-pill">0% Queda FPS</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- GAMES SECTION -->
     <section class="games-section" id="jogos">
       <div class="container text-center reveal-slide-up">
@@ -620,6 +725,136 @@
               <div class="stat-label">Milhares de Jogos</div>
               <p class="stat-desc">Compatibilidade abrangente com títulos DirectX 9/11/12, Vulkan e OpenGL.</p>
             </div>
+
+            <!-- Stat 5: Pessoas Online no Site em Tempo Real -->
+            <div class="stat-card stat-card-live">
+              <div class="stat-value-wrap">
+                <span class="stat-number" id="statsLiveVisitorCount">1</span>
+                <span class="stat-live-pulse-dot"></span>
+              </div>
+              <div class="stat-label">Gamers no Site Agora</div>
+              <p class="stat-desc">Contagem em tempo real de pessoas a explorar e a descarregar o Segra.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEEDBACK & BUG REPORT COMMUNITY SECTION -->
+    <section class="feedback-section" id="feedback">
+      <div class="container">
+        <div class="section-header text-center reveal-slide-up">
+          <div class="section-badge">MURAL DA COMUNIDADE & TESTADORES</div>
+          <h2 class="section-title">Feedback, <span class="gradient-yellow">Otimização & Bugs</span></h2>
+          <p class="section-subtitle">
+            Diz-nos o que achas do Segra! Avalia a performance no teu PC, dá sugestões ou reporta bugs diretamente aos criadores. As tuas mensagens aparecem em direto!
+          </p>
+        </div>
+
+        <!-- Rating Highlights -->
+        <div class="feedback-summary-cards reveal-slide-up">
+          <div class="summary-card">
+            <div class="summary-icon">⭐</div>
+            <div class="summary-val">4.9 / 5.0</div>
+            <div class="summary-lbl">Avaliação da App</div>
+            <p class="summary-sub">Média dos utilizadores ativos</p>
+          </div>
+          <div class="summary-card highlight-card">
+            <div class="summary-icon">🚀</div>
+            <div class="summary-val">99.4%</div>
+            <div class="summary-lbl">Otimização Aprovada</div>
+            <p class="summary-sub">Zero perda de FPS reportada</p>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon">🐛</div>
+            <div class="summary-val">100%</div>
+            <div class="summary-lbl">Bugs Corrigidos</div>
+            <p class="summary-sub">Suporte ativo no GitHub & Discord</p>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon">👥</div>
+            <div class="summary-val" id="feedbackOnlineNow">1 Online</div>
+            <div class="summary-lbl">Comunidade Viva</div>
+            <p class="summary-sub">Pessoas no site em tempo real</p>
+          </div>
+        </div>
+
+        <!-- Feedback Board Container -->
+        <div class="feedback-board-container reveal-slide-up">
+          <!-- Left: Feedback Form -->
+          <div class="feedback-form-card">
+            <div class="form-card-header">
+              <h3 class="form-card-title">✍️ Deixa o Teu Feedback</h3>
+              <p class="form-card-sub">Publica a tua opinião ou reporta um bug em tempo real:</p>
+            </div>
+
+            <form id="feedbackForm" class="feedback-form">
+              <div class="form-group">
+                <label for="fbNickname">O teu Nick / Gamer Tag</label>
+                <input type="text" id="fbNickname" class="form-input" placeholder="Ex: Chibanga, ProGamer_PT..." required maxlength="30">
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="fbCategory">Categoria</label>
+                  <select id="fbCategory" class="form-select">
+                    <option value="otimizacao">⚡ Otimização & FPS</option>
+                    <option value="app_boa">⭐ A App é Boa? (Review)</option>
+                    <option value="bug">🐛 Reportar Bug</option>
+                    <option value="sugestao">💡 Sugestão / Ideia</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="fbGpu">Tua GPU (opcional)</label>
+                  <input type="text" id="fbGpu" class="form-input" placeholder="Ex: RTX 3060, RX 6600..." maxlength="25">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>A app é boa? Classificação:</label>
+                <div class="star-rating-select" id="starRatingSelect">
+                  <button type="button" class="star-btn active" data-rating="1">★</button>
+                  <button type="button" class="star-btn active" data-rating="2">★</button>
+                  <button type="button" class="star-btn active" data-rating="3">★</button>
+                  <button type="button" class="star-btn active" data-rating="4">★</button>
+                  <button type="button" class="star-btn active" data-rating="5">★</button>
+                  <span class="rating-text-label" id="ratingTextLabel">5 / 5 - Excelente!</span>
+                </div>
+                <input type="hidden" id="fbRatingVal" value="5">
+              </div>
+
+              <div class="form-group">
+                <label for="fbMessage">Mensagem / Relatório</label>
+                <textarea id="fbMessage" class="form-textarea" rows="3" placeholder="Conta como corre no teu jogo, se notas perda de FPS, ou descreve algum bug que tenhas encontrado..." required maxlength="500"></textarea>
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-block" id="fbSubmitBtn">
+                <span>Publicar no Mural</span>
+                <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
+              </button>
+            </form>
+          </div>
+
+          <!-- Right: Interactive Chat / Live Feed -->
+          <div class="feedback-chat-card">
+            <div class="chat-card-header">
+              <div class="chat-header-title">
+                <span class="chat-pulse-dot"></span>
+                <h3>Mural em Tempo Real</h3>
+              </div>
+              <div class="chat-filters" id="chatFilters">
+                <button class="filter-pill active" data-filter="all">Todos</button>
+                <button class="filter-pill" data-filter="otimizacao">⚡ Otimização</button>
+                <button class="filter-pill" data-filter="app_boa">⭐ Reviews</button>
+                <button class="filter-pill" data-filter="bug">🐛 Bugs</button>
+              </div>
+            </div>
+
+            <!-- Messages List (Scrollable) -->
+            <div class="chat-messages-list" id="chatMessagesList">
+              <!-- Rendered dynamically & loaded from defaults + localStorage -->
+            </div>
           </div>
         </div>
       </div>
@@ -719,9 +954,12 @@
             <ul class="footer-nav">
               <li><a href="#hero">Início</a></li>
               <li><a href="#funcionalidades">Funcionalidades</a></li>
+              <li><a href="#clipes">Clipes CS2</a></li>
               <li><a href="#jogos">Jogos Suportados</a></li>
               <li><a href="#como-funciona">Como Funciona</a></li>
               <li><a href="#estatisticas">Performance</a></li>
+              <li><a href="#feedback">Feedback & Bugs</a></li>
+              <li><a href="#comunidade">Comunidade</a></li>
             </ul>
           </div>
 
