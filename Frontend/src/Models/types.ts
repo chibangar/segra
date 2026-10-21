@@ -13,6 +13,7 @@ export interface Content {
   id: string;
   type: ContentType;
   title: string;
+  titleIsAutomatic?: boolean;
   game: string;
   bookmarks: Bookmark[];
   fileName: string;
@@ -117,6 +118,13 @@ export interface Bookmark {
   type: BookmarkType;
   subtype?: BookmarkSubtype;
   time: string;
+  map?: string;
+  weapon?: string;
+  weaponIsInferred?: boolean;
+  round?: number;
+  isHeadshot?: boolean;
+  isOneTap?: boolean;
+  isCollateral?: boolean;
 }
 
 export interface Recording {

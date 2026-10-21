@@ -2246,7 +2246,11 @@ export default function VideoComponent({ video }: { video: Content }) {
                         exit={{ opacity: 0, scale: 0.5 }}
                         transition={{ duration: 0.1 }}
                         className="tooltip absolute bottom-0 transform -translate-x-1/2 cursor-pointer z-10 flex flex-col items-center text-[#25272e]"
-                        data-tip={isAce ? `★ ACE! ★ (${bookmark.time})` : `${bookmark.type}${bookmark.subtype ? ` - ${bookmark.subtype}` : ''} (${bookmark.time})`}
+                        data-tip={
+                          isAce
+                            ? `★ ACE! ★ (${bookmark.time})`
+                            : `${bookmark.type}${bookmark.subtype ? ` - ${bookmark.subtype}` : ''} (${bookmark.time})`
+                        }
                         style={{ left: `${leftPos}px` }}
                         onClick={() => {
                           const seekTo = Math.max(
@@ -2263,10 +2267,18 @@ export default function VideoComponent({ video }: { video: Content }) {
                           handleDeleteBookmark(bookmark.id);
                         }}
                       >
-                        <div className={`${isAce ? 'bg-amber-400 text-amber-950 shadow-[0_0_12px_rgba(245,158,11,0.85)] scale-110' : 'bg-[#EFAF2B] text-[#25272e]'} w-[26px] h-[26px] rounded-full flex items-center justify-center mb-0 transition-transform`}>
-                          <Icon size={18} strokeWidth={isAce ? 2.8 : 2.5} className={isAce ? 'fill-amber-950' : ''} />
+                        <div
+                          className={`${isAce ? 'bg-amber-400 text-amber-950 shadow-[0_0_12px_rgba(245,158,11,0.85)] scale-110' : 'bg-[#EFAF2B] text-[#25272e]'} w-[26px] h-[26px] rounded-full flex items-center justify-center mb-0 transition-transform`}
+                        >
+                          <Icon
+                            size={18}
+                            strokeWidth={isAce ? 2.8 : 2.5}
+                            className={isAce ? 'fill-amber-950' : ''}
+                          />
                         </div>
-                        <div className={`w-[2px] h-[16px] ${isAce ? 'bg-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.85)]' : 'bg-[#EFAF2B]'}`} />
+                        <div
+                          className={`w-[2px] h-[16px] ${isAce ? 'bg-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.85)]' : 'bg-[#EFAF2B]'}`}
+                        />
                       </motion.div>
                     );
                   })}

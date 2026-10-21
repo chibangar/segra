@@ -185,3 +185,36 @@ for (const media of document.querySelectorAll('.demo-media')) {
   else if (inView && !userPaused) startPreview();
  });
 }
+
+// Interactive preview: filters stay local; links point to the site's real videos.
+const libraryCards = [...document.querySelectorAll('.library-card')];
+const libraryFilters = ['map', 'weapon', 'event'].map(key => [key, document.querySelector(`#library-${key}`)]);
+function filterLibrary() {
+ let visible = 0;
+ libraryCards.forEach(card => {
+  card.hidden = libraryFilters.some(([key, control]) => control.value && card.dataset[`library${key[0].toUpperCase()}${key.slice(1)}`] !== control.value);
+  if (!card.hidden) visible++;
+ });
+ document.querySelector('#library-empty').hidden = visible > 0;
+ document.querySelector('#library-status').textContent = `${visible} ${visible === 1 ? 'exemplo' : 'exemplos'}`;
+}
+libraryFilters.forEach(([, control]) => control.addEventListener('change', filterLibrary));
+document.querySelector('#library-reset').addEventListener('click', () => {
+ libraryFilters.forEach(([, control]) => { control.value = ''; }); filterLibrary();
+});
+document.querySelectorAll('[data-library-copy]').forEach(button => button.addEventListener('click', async () => {
+ const url = new URL(location.href); url.hash = `clipe-${button.dataset.libraryCopy}`;
+ try { await navigator.clipboard.writeText(url.href); document.querySelector('#library-status').textContent = 'Link copiado!'; }
+ catch { document.querySelector('#library-status').textContent = 'Não foi possível copiar o link. Abre o vídeo e copia o endereço.'; }
+}));
+document.querySelectorAll('[data-library-play]').forEach(link => link.addEventListener('click', () => {
+ document.querySelector(`[data-clip="${link.dataset.libraryPlay}"]`)?.click();
+}));
+function openSharedClip() {
+ const id = location.hash.replace('#clipe-', '');
+ if (!location.hash.startsWith('#clipe-')) return;
+ const card = cards.find(card => card.dataset.clip === id);
+ if (card) { card.click(); document.querySelector('#clipes').scrollIntoView(); }
+}
+window.addEventListener('hashchange', openSharedClip);
+openSharedClip();

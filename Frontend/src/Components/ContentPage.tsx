@@ -5,7 +5,7 @@ import { Content, ContentType } from '../Models/types';
 import { useScroll } from '../Context/ScrollContext';
 import { useLayoutEffect, useRef, useState, useMemo, useEffect, useCallback } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { FileUp, Merge, Trash2 } from 'lucide-react';
+import { FileUp, Merge, Trash2, MapPin, Crosshair, Hash, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { sendMessageToBackend } from '../Utils/MessageUtils';
 import ContentFilters, { ALL_GAMES, GameOption, IMPORTED, SortOption } from './ContentFilters';
@@ -16,6 +16,8 @@ import Button from './Button';
 import MergeModal from './MergeModal';
 import { useDeleteConfirmation } from '../Hooks/useDeleteConfirmation';
 import { useI18n } from '../Context/I18nContext';
+
+import { highlightMatches, mapLabel, weaponLabel } from '../Utils/HighlightUtils';
 
 // Imports that carried no Segra metadata have no game, so they are only listed under Imported
 const isUnknownImport = (item: Content) => item.isImported && item.game === 'Unknown';
@@ -69,6 +71,19 @@ export default function ContentPage({
     [state.content, contentType],
   );
   const { games: gameSettings, airplaneMode } = useSettings();
+  const [selectedMap, setSelectedMap] = useState('');
+  const [selectedWeapon, setSelectedWeapon] = useState('');
+  const [selectedEvent, setSelectedEvent] = useState('');
+  const mapOptions = [
+    ...new Set(
+      contentItems.flatMap((c) => (c.bookmarks ?? []).flatMap((b) => (b.map ? [b.map] : []))),
+    ),
+  ].sort();
+  const weaponOptions = [
+    ...new Set(
+      contentItems.flatMap((c) => (c.bookmarks ?? []).flatMap((b) => (b.weapon ? [b.weapon] : []))),
+    ),
+  ].sort();
   const [selectedGame, setSelectedGame] = useState<string>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(`${sectionId}-filters`) ?? 'null');
@@ -126,7 +141,9 @@ export default function ContentPage({
   }, [gameOptions, selectedGame]);
 
   const filteredItems = useMemo(() => {
-    let filtered = [...contentItems];
+    let filtered = contentItems.filter((item) =>
+      highlightMatches(item, selectedMap, selectedWeapon, selectedEvent),
+    );
 
     if (selectedGame !== ALL_GAMES) {
       filtered = filtered.filter((item) =>
@@ -164,7 +181,7 @@ export default function ContentPage({
     filtered.sort((a, b) => byOption(a, b) || Number(b.compressed) - Number(a.compressed));
 
     return filtered;
-  }, [contentItems, selectedGame, sortOption]);
+  }, [contentItems, selectedGame, sortOption, selectedMap, selectedWeapon, selectedEvent]);
 
   const handleGameFilterChange = (game: string) => {
     setSelectedGame(game);
@@ -585,11 +602,11 @@ export default function ContentPage({
   return (
     <div
       ref={containerRef}
-      className="relative p-6 space-y-6 overflow-y-scroll h-full bg-[#0b0e14] overflow-x-hidden"
+      className="relative p-5 space-y-5 overflow-y-scroll h-full bg-black overflow-x-hidden"
       onScroll={handleScroll}
       onMouseDown={handleMarqueeMouseDown}
     >
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-extrabold text-white tracking-tight">{pageTitle}</h1>
           <span className="bg-white/[0.08] text-gray-300 border border-white/[0.08] font-semibold text-xs px-2.5 py-0.5 rounded-full">
@@ -618,10 +635,87 @@ export default function ContentPage({
         </div>
       </div>
 
+      <div
+        className="flex flex-wrap items-center gap-5 text-sm text-neutral-400"
+        aria-label={language === 'pt-PT' ? 'Filtros de jogadas' : 'Highlight filters'}
+      >
+        <span>{language === 'pt-PT' ? 'Filtros' : 'Filters'}</span>
+        {[
+          {
+            Icon: MapPin,
+            label: language === 'pt-PT' ? 'Mapa' : 'Map',
+            value: selectedMap,
+            change: setSelectedMap,
+            options: mapOptions.map((v) => [v, mapLabel(v)]),
+          },
+          {
+            Icon: Crosshair,
+            label: language === 'pt-PT' ? 'Arma' : 'Weapon',
+            value: selectedWeapon,
+            change: setSelectedWeapon,
+            options: weaponOptions.map((v) => [v, weaponLabel(v)]),
+          },
+          {
+            Icon: Hash,
+            label: language === 'pt-PT' ? 'Jogada' : 'Event',
+            value: selectedEvent,
+            change: setSelectedEvent,
+            options: [
+              ['headshot', '🎯 Headshot'],
+              ['multi', '✌️ Multi-kill'],
+              ['ace', '🏆 ACE'],
+              ['onetap', '☝️ One Tap'],
+              ['collateral', '👾 Collateral'],
+            ],
+          },
+        ].map(({ Icon: FilterIcon, label, value, change, options }) => (
+          <label key={label} className="relative flex items-center gap-2 text-white" title={label}>
+            <FilterIcon size={22} aria-hidden="true" />
+            <select
+              aria-label={label}
+              value={value}
+              onChange={(e) => {
+                change(e.target.value);
+                setSelectedItems(new Set());
+              }}
+              className="appearance-none bg-black text-neutral-300 pr-5 py-2 cursor-pointer max-w-40 outline-offset-2"
+            >
+              <option value="">{label}</option>
+              {options.map(([key, name]) => (
+                <option key={key} value={key}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} className="absolute right-0 pointer-events-none" />
+          </label>
+        ))}
+        {(selectedMap || selectedWeapon || selectedEvent) && (
+          <button
+            type="button"
+            className="text-neutral-300 hover:text-white cursor-pointer"
+            onClick={() => {
+              setSelectedMap('');
+              setSelectedWeapon('');
+              setSelectedEvent('');
+            }}
+          >
+            {language === 'pt-PT' ? 'Limpar filtros' : 'Clear filters'}
+          </button>
+        )}
+      </div>
+
       {contentItems.length > 0 || hasProgress ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {isProgressVisible && progressCardElement}
 
+          {filteredItems.length === 0 && !hasProgress && (
+            <p className="col-span-full py-16 text-center text-neutral-400">
+              {language === 'pt-PT'
+                ? 'Nenhum vídeo corresponde aos filtros.'
+                : 'No videos match these filters.'}
+            </p>
+          )}
           {filteredItems.map((video) => (
             <ContentCard
               key={video.id}

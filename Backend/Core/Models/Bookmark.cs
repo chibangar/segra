@@ -11,6 +11,22 @@ namespace Segra.Backend.Core.Models
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public BookmarkSubtype? Subtype { get; set; }
         public TimeSpan Time { get; set; }
+        public DateTime? OccurredAt { get; set; }
+        public string? Map { get; set; }
+        public string? Weapon { get; set; }
+        public bool WeaponIsInferred { get; set; }
+        public int? Round { get; set; }
+        public bool IsHeadshot { get; set; }
+        // These labels are only set when a source can confirm the shot that caused the kill.
+        public bool IsOneTap { get; set; }
+        public bool IsCollateral { get; set; }
+
+        public Bookmark At(TimeSpan time, bool preserveId = true) => new()
+        {
+            Id = preserveId ? Id : random.Next(1, int.MaxValue), Type = Type, Subtype = Subtype, Time = time, OccurredAt = OccurredAt,
+            Map = Map, Weapon = Weapon, WeaponIsInferred = WeaponIsInferred, Round = Round, IsHeadshot = IsHeadshot,
+            IsOneTap = IsOneTap, IsCollateral = IsCollateral
+        };
     }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]

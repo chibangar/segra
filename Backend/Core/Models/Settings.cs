@@ -1269,7 +1269,7 @@ namespace Segra.Backend.Core.Models
 
             if (Settings.Instance.AutoClipKills && (bookmark.Type == BookmarkType.Kill || bookmark.Type == BookmarkType.Goal))
             {
-                Recorder.OBSService.ScheduleAutoClip(bookmark.Type, Game, bookmark.Subtype);
+                Recorder.OBSService.ScheduleAutoClip(bookmark.Type, Game, bookmark.Subtype, bookmark);
             }
         }
 
@@ -1318,6 +1318,7 @@ namespace Segra.Backend.Core.Models
         public ContentType Type { get; set; } = ContentType.Session;
 
         public string Title { get; set; } = string.Empty;
+        public bool TitleIsAutomatic { get; set; }
 
         public string Game { get; set; } = string.Empty;
         public List<Bookmark> Bookmarks { get; set; } = new List<Bookmark>();

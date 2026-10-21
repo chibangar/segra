@@ -31,7 +31,7 @@
     <!-- Exclude leftover build output from the removed Inspector sub-project. Its generated
          AssemblyInfo.cs sits under this project folder and would otherwise be globbed into
          this compilation, leaking a duplicate AssemblyVersion (and masking the real version). -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);Inspector\**;HotkeyBroker\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Inspector\**;HotkeyBroker\**;Tests\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <!-- Windows-only build settings -->

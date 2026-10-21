@@ -137,15 +137,17 @@ namespace Segra.Backend.Games
             }
         }
 
-        public static void RegisterGameEvent(BookmarkType type, string? gameName, BookmarkSubtype? subtype = null, DateTime? eventTime = null)
+        public static void RegisterGameEvent(BookmarkType type, string? gameName, BookmarkSubtype? subtype = null, DateTime? eventTime = null, Bookmark? details = null)
         {
+            if (details != null) details.OccurredAt ??= eventTime ?? DateTime.Now;
             var recording = AppState.Instance.Recording ?? Recorder.OBSService.AlwaysOnBuffer;
             if (recording != null)
             {
-                var bookmark = new Bookmark
+                var bookmark = details?.At((eventTime ?? DateTime.Now) - recording.StartTime) ?? new Bookmark
                 {
                     Type = type,
                     Subtype = subtype,
+                    OccurredAt = eventTime ?? DateTime.Now,
                     Time = (eventTime ?? DateTime.Now) - recording.StartTime
                 };
                 recording.AddBookmark(bookmark);
@@ -159,7 +161,7 @@ namespace Segra.Backend.Games
 #endif
                 if (Settings.Instance.AutoClipKills && (type == BookmarkType.Kill || type == BookmarkType.Goal))
                 {
-                    Recorder.OBSService.ScheduleAutoClip(type, gameName, subtype);
+                    Recorder.OBSService.ScheduleAutoClip(type, gameName, subtype, details);
                 }
             }
         }

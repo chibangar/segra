@@ -44,20 +44,22 @@ export default function InAppNotificationOverlay() {
 
   // Position styles
   const position = settings.inGameNotificationPosition || 'TopRight';
-  const positionClasses = {
-    TopRight: 'top-5 right-5 items-end',
-    TopLeft: 'top-5 left-5 items-start',
-    BottomRight: 'bottom-5 right-5 items-end',
-    BottomLeft: 'bottom-5 left-5 items-start',
-  }[position] || 'top-5 right-5 items-end';
+  const positionClasses =
+    {
+      TopRight: 'top-5 right-5 items-end',
+      TopLeft: 'top-5 left-5 items-start',
+      BottomRight: 'bottom-5 right-5 items-end',
+      BottomLeft: 'bottom-5 left-5 items-start',
+    }[position] || 'top-5 right-5 items-end';
 
   // Size styles
   const size = settings.inGameNotificationSize || 'Medium';
-  const sizeClasses = {
-    Small: 'scale-[0.82] origin-top-right',
-    Medium: 'scale-100',
-    Large: 'scale-[1.2] origin-top-right',
-  }[size] || 'scale-100';
+  const sizeClasses =
+    {
+      Small: 'scale-[0.82] origin-top-right',
+      Medium: 'scale-100',
+      Large: 'scale-[1.2] origin-top-right',
+    }[size] || 'scale-100';
 
   // Accent color mapping
   const getAccentColor = (type: string) => {

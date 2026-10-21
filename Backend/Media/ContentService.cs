@@ -21,9 +21,14 @@ namespace Segra.Backend.Media
         /// Writes the metadata file for a video and returns the new content id, or null when it could not be written.
         /// The id is the file name of the metadata, thumbnail and waveform files.
         /// </summary>
-        public static async Task<string?> CreateMetadataFile(string filePath, Content.ContentType type, string game, List<Bookmark>? bookmarks = null, string? title = null, DateTime? createdAt = null, int? igdbId = null, bool isImported = false, List<string>? audioTrackNames = null, List<string>? audioTrackTypes = null, bool compressed = false, string? gameExePath = null)
+        public static async Task<string?> CreateMetadataFile(string filePath, Content.ContentType type, string game, List<Bookmark>? bookmarks = null, string? title = null, DateTime? createdAt = null, int? igdbId = null, bool isImported = false, List<string>? audioTrackNames = null, List<string>? audioTrackTypes = null, bool compressed = false, string? gameExePath = null, bool titleIsAutomatic = false)
         {
             bookmarks ??= [];
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = Segra.Backend.Games.CounterStrike2.HighlightTitle.FromBookmarks(bookmarks);
+                titleIsAutomatic = title != null;
+            }
             filePath = PathUtils.Normalize(filePath);
             if (string.Equals(gameExePath, "Unknown", StringComparison.OrdinalIgnoreCase))
             {
@@ -62,6 +67,7 @@ namespace Segra.Backend.Media
                     Id = id,
                     Type = type,
                     Title = title ?? string.Empty,
+                    TitleIsAutomatic = titleIsAutomatic,
                     Game = game,
                     Bookmarks = bookmarks,
                     FileName = contentFileName,
@@ -928,6 +934,7 @@ namespace Segra.Backend.Media
                     if (await UpdateMetadataFile(metadataFilePath, c =>
                     {
                         c.Title = newTitle;
+                        c.TitleIsAutomatic = false;
                         c.FileName = newFileName;
                         c.FilePath = newFilePath;
                     }) == null)

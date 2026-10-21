@@ -189,6 +189,7 @@ namespace Segra.Backend.Recorder
             public List<string>? AudioTrackTypes { get; init; }
             public string? Title { get; init; }
             public BookmarkSubtype? Subtype { get; init; }
+            public bool TitleIsAutomatic { get; init; }
             public string? FailureReason;
             public readonly TaskCompletionSource<string?> Signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
@@ -217,8 +218,10 @@ namespace Segra.Backend.Recorder
 
         private static CancellationTokenSource? _autoClipCts;
         private static readonly object _autoClipLock = new();
+        private static readonly List<Bookmark> _pendingClipEvents = [];
+        private static string? _pendingClipGame;
 
-        public static void ScheduleAutoClip(BookmarkType type, string? gameName, BookmarkSubtype? subtype = null)
+        public static void ScheduleAutoClip(BookmarkType type, string? gameName, BookmarkSubtype? subtype = null, Bookmark? details = null)
         {
             if (!Settings.Instance.AutoClipKills || _bufferOutput == null || !_bufferOutput.IsActive)
             {
@@ -242,9 +245,16 @@ namespace Segra.Backend.Recorder
                     ? 6000
                     : Math.Clamp((int)(Settings.Instance.HighlightPaddingAfter * 1000), 2000, 10000);
 
-                string? customTitle = subtype == BookmarkSubtype.Ace
-                    ? $"{gameName ?? "Counter-Strike 2"} - ACE"
-                    : null;
+                if (_pendingClipGame != gameName || (_pendingClipEvents.Count > 0 && details != null &&
+                    (_pendingClipEvents[^1].Map != details.Map || _pendingClipEvents[^1].Round != details.Round)))
+                    _pendingClipEvents.Clear();
+                _pendingClipGame = gameName;
+                var clipEvent = details ?? new Bookmark { Type = type, Subtype = subtype };
+                clipEvent.OccurredAt ??= DateTime.Now;
+                _pendingClipEvents.Add(clipEvent);
+                var eventSnapshot = _pendingClipEvents.ToList();
+                string? customTitle = Segra.Backend.Games.CounterStrike2.HighlightTitle.FromBookmarks(_pendingClipEvents)
+                    ?? (subtype == BookmarkSubtype.Ace ? $"{gameName} - ACE" : null);
 
                 Log.Information($"Auto-clip scheduled for {type} ({subtype}) in {gameName ?? "game"} (waiting {delayMs}ms post-kill padding)");
 
@@ -259,7 +269,12 @@ namespace Segra.Backend.Recorder
                             return;
 
                         Log.Information($"Executing auto-clip save for {type} ({subtype}) in {gameName ?? "game"}");
-                        await SaveReplayBuffer(customTitle, subtype);
+                        lock (_autoClipLock)
+                        {
+                            if (token.IsCancellationRequested) return;
+                            _pendingClipEvents.Clear();
+                        }
+                        await SaveReplayBuffer(customTitle, subtype, automaticTitle: true, autoClipEvents: eventSnapshot);
                     }
                     catch (OperationCanceledException)
                     {
@@ -276,7 +291,7 @@ namespace Segra.Backend.Recorder
 
         public static Task<bool> SaveReplayBuffer() => SaveReplayBuffer(null, null);
 
-        public static async Task<bool> SaveReplayBuffer(string? customTitle = null, BookmarkSubtype? subtype = null)
+        public static async Task<bool> SaveReplayBuffer(string? customTitle = null, BookmarkSubtype? subtype = null, bool automaticTitle = false, IReadOnlyList<Bookmark>? autoClipEvents = null)
         {
             // One save at a time: OBS defers a save requested while a previous one is still
             // muxing, and its 'saved' signal carries no identity, so correlation is only sound
@@ -300,6 +315,7 @@ namespace Segra.Backend.Recorder
                     AudioTrackNames = recording?.AudioTrackNames,
                     AudioTrackTypes = recording?.AudioTrackTypes,
                     Title = customTitle,
+                    TitleIsAutomatic = automaticTitle,
                     Subtype = subtype
                 };
 
@@ -358,7 +374,7 @@ namespace Segra.Backend.Recorder
                 await EnsureFileReady(savedPath);
 
                 // Create metadata for the buffer recording
-                string? bufferId = await ContentService.CreateMetadataFile(savedPath, Content.ContentType.Buffer, request.Game, title: request.Title, igdbId: request.IgdbId, audioTrackNames: request.AudioTrackNames, audioTrackTypes: request.AudioTrackTypes, gameExePath: request.ExePath);
+                string? bufferId = await ContentService.CreateMetadataFile(savedPath, Content.ContentType.Buffer, request.Game, title: request.Title, igdbId: request.IgdbId, audioTrackNames: request.AudioTrackNames, audioTrackTypes: request.AudioTrackTypes, gameExePath: request.ExePath, titleIsAutomatic: request.TitleIsAutomatic);
                 await ContentService.CreateThumbnail(savedPath, Content.ContentType.Buffer, bufferId);
                 await ContentService.CreateWaveformFile(savedPath, Content.ContentType.Buffer, bufferId);
 
@@ -367,6 +383,21 @@ namespace Segra.Backend.Recorder
 
                 if (bufferId != null && recording != null)
                     await AddReplayBookmarks(recording, bufferId, requestedAt);
+
+                // Buffer-only integrations may have no recording object to copy bookmarks from.
+                // Keep their event context as well, with times relative to the saved video.
+                if (bufferId != null && autoClipEvents != null)
+                {
+                    var saved = AppState.Instance.Content.FirstOrDefault(c => c.Id == bufferId);
+                    if (saved != null)
+                    {
+                        DateTime startedAt = requestedAt - saved.Duration;
+                        var events = autoClipEvents.Where(b => b.OccurredAt.HasValue)
+                            .Select(b => b.At(b.OccurredAt!.Value - startedAt))
+                            .Where(b => b.Time >= TimeSpan.Zero && b.Time <= saved.Duration).ToList();
+                        await ContentService.AddBookmarks(bufferId, events);
+                    }
+                }
 
                 if (bufferId != null && request.Subtype == BookmarkSubtype.Ace)
                 {
@@ -411,7 +442,7 @@ namespace Segra.Backend.Recorder
                 DateTime startedAt = endedAt - duration;
 
                 List<Bookmark> InReplay(IEnumerable<Bookmark> bookmarks) => bookmarks
-                    .Select(b => new Bookmark { Id = b.Id, Type = b.Type, Subtype = b.Subtype, Time = recording.StartTime + b.Time - startedAt })
+                    .Select(b => b.At(recording.StartTime + b.Time - startedAt))
                     .Where(b => b.Time >= TimeSpan.Zero && b.Time <= duration)
                     .ToList();
 

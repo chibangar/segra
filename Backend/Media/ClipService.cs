@@ -185,7 +185,7 @@ namespace Segra.Backend.Media
                         var segmentAudioTrackTypes = Settings.Instance.ClipKeepSeparateAudioTracks
                             ? extractedSegmentTrackTypes[i]
                             : null;
-                        string? segmentClipId = await ContentService.CreateMetadataFile(segmentOutputFilePath, Content.ContentType.Clip, segment.Game ?? "Unknown", null, segment.Title, igdbId: segment.IgdbId, audioTrackNames: segmentAudioTrackNames, audioTrackTypes: segmentAudioTrackTypes, gameExePath: GetSourceGameExePath(segment));
+                        string? segmentClipId = await ContentService.CreateMetadataFile(segmentOutputFilePath, Content.ContentType.Clip, segment.Game ?? "Unknown", GetClipBookmarks([segment]), GetClipTitle([segment]), igdbId: segment.IgdbId, audioTrackNames: segmentAudioTrackNames, audioTrackTypes: segmentAudioTrackTypes, gameExePath: GetSourceGameExePath(segment), titleIsAutomatic: GetClipTitle([segment]) == Segra.Backend.Games.CounterStrike2.HighlightTitle.FromBookmarks(GetClipBookmarks([segment])));
                         await ContentService.CreateThumbnail(segmentOutputFilePath, Content.ContentType.Clip, segmentClipId);
                         await ContentService.CreateWaveformFile(segmentOutputFilePath, Content.ContentType.Clip, segmentClipId);
                     }
@@ -265,7 +265,7 @@ namespace Segra.Backend.Media
 
                 if (!createSeparateClips)
                 {
-                    string? clipId = await ContentService.CreateMetadataFile(outputFilePath!, Content.ContentType.Clip, firstSegment?.Game!, null, firstSegment?.Title, igdbId: firstSegment?.IgdbId, audioTrackNames: unionAudioLayout, audioTrackTypes: unionAudioTrackTypes, gameExePath: firstSegment != null ? GetSourceGameExePath(firstSegment) : null);
+                    string? clipId = await ContentService.CreateMetadataFile(outputFilePath!, Content.ContentType.Clip, firstSegment?.Game!, GetClipBookmarks(extractedSegments), GetClipTitle(extractedSegments), igdbId: firstSegment?.IgdbId, audioTrackNames: unionAudioLayout, audioTrackTypes: unionAudioTrackTypes, gameExePath: firstSegment != null ? GetSourceGameExePath(firstSegment) : null, titleIsAutomatic: GetClipTitle(extractedSegments) == Segra.Backend.Games.CounterStrike2.HighlightTitle.FromBookmarks(GetClipBookmarks(extractedSegments)));
                     await ContentService.CreateThumbnail(outputFilePath!, Content.ContentType.Clip, clipId);
                     await ContentService.CreateWaveformFile(outputFilePath!, Content.ContentType.Clip, clipId);
                 }
@@ -422,7 +422,7 @@ namespace Segra.Backend.Media
                 TimeSpan offset = TimeSpan.Zero;
                 foreach (var session in sessions)
                 {
-                    bookmarks.AddRange(session.Bookmarks.Select(b => new Bookmark { Type = b.Type, Subtype = b.Subtype, Time = b.Time + offset }));
+                    bookmarks.AddRange(session.Bookmarks.Select(b => b.At(b.Time + offset, preserveId: false)));
                     offset += session.Duration;
                 }
 
@@ -1122,6 +1122,42 @@ namespace Segra.Backend.Media
             }
 
             return null;
+        }
+
+        private static List<Bookmark> GetClipBookmarks(IEnumerable<Segment> segments)
+        {
+            var bookmarks = new List<Bookmark>();
+            double offset = 0;
+            foreach (var segment in segments)
+            {
+                var source = GetClipSource(segment);
+                if (source?.Bookmarks != null)
+                    bookmarks.AddRange(source.Bookmarks
+                        .Where(b => b.Time.TotalSeconds >= segment.StartTime && b.Time.TotalSeconds < segment.EndTime)
+                        .Select(b => b.At(TimeSpan.FromSeconds(b.Time.TotalSeconds - segment.StartTime + offset), preserveId: false)));
+                offset += segment.EndTime - segment.StartTime;
+            }
+            return bookmarks;
+        }
+
+        private static Content? GetClipSource(Segment segment)
+        {
+            return AppState.Instance.Content.FirstOrDefault(c =>
+                    c.Type.ToString() == segment.Type &&
+                    (!string.IsNullOrEmpty(segment.ContentId) ? c.Id == segment.ContentId :
+                        !string.IsNullOrEmpty(segment.FilePath) ? string.Equals(PathUtils.Normalize(c.FilePath), PathUtils.Normalize(segment.FilePath), StringComparison.OrdinalIgnoreCase) :
+                        c.FileName == segment.FileName));
+        }
+
+        private static string? GetClipTitle(IEnumerable<Segment> segments)
+        {
+            var list = segments.ToList();
+            if (list.Count == 0) return null;
+            var first = list[0];
+            var source = GetClipSource(first);
+            return Segra.Backend.Games.CounterStrike2.HighlightTitle.ForExport(
+                first.Title == first.Game ? null : first.Title, source?.Title,
+                source?.Bookmarks ?? [], GetClipBookmarks(list), source?.TitleIsAutomatic ?? false);
         }
 
         private static string? GetSourceGameExePath(Segment segment)

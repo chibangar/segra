@@ -213,14 +213,20 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
           <div className="flex flex-col min-w-0">
             <span className="text-[11px] font-semibold text-white/90 truncate leading-tight">
               {recording
-                ? (recording.game ? `${recording.game}` : t('menu.recording'))
+                ? recording.game
+                  ? `${recording.game}`
+                  : t('menu.recording')
                 : preRecording
                   ? `${preRecording.game}`
-                  : (language === 'pt-PT' ? 'Pronto a Clipar' : 'Ready to Clip')}
+                  : language === 'pt-PT'
+                    ? 'Pronto a Clipar'
+                    : 'Ready to Clip'}
             </span>
             <span className="text-[10px] text-gray-400 truncate leading-tight mt-0.5">
               {recording
-                ? (language === 'pt-PT' ? 'Sessão ativa' : 'Recording session')
+                ? language === 'pt-PT'
+                  ? 'Sessão ativa'
+                  : 'Recording session'
                 : `${language === 'pt-PT' ? 'Atalho' : 'Shortcut'}: ${clipKeyName}`}
             </span>
           </div>
@@ -269,7 +275,9 @@ export default function Menu({ selectedMenu, onSelectMenu }: MenuProps) {
                   }`}
                 >
                   <span className="flex items-center gap-2.5 min-w-0">
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : 'text-gray-400'}`} />
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : 'text-gray-400'}`}
+                    />
                     <span className="truncate">{getMenuLabel(id)}</span>
                   </span>
                   {id === 'Highlights' && (

@@ -19,9 +19,12 @@ import {
   Bookmark,
   ExternalLink,
   Play,
+  Monitor,
+  CloudUpload,
+  ImageOff,
+  Scissors,
+  Zap,
 } from 'lucide-react';
-import { Link, Check } from 'lucide';
-import { MorphIcon } from 'morphicons/react';
 import { useAiHighlights } from '../Context/AiHighlightsContext';
 import { useCompression } from '../Context/CompressionContext';
 import Button from './Button';
@@ -82,6 +85,8 @@ export default function ContentCard({
 
   const threeDotsButtonRef = useRef<HTMLButtonElement>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [contextMenuPosition, setContextMenuPosition] = useState<{
@@ -154,13 +159,13 @@ export default function ContentCard({
       <div
         className={
           type === 'Highlight'
-            ? 'w-full rounded-2xl relative highlight-card overflow-hidden'
-            : 'flex flex-col w-full rounded-2xl overflow-hidden bg-[#121620] border border-white/[0.07]'
+            ? 'w-full rounded-md relative highlight-card overflow-hidden'
+            : 'flex flex-col w-full rounded-md overflow-hidden bg-[#161616] border border-white/[0.07]'
         }
       >
         {type === 'Highlight' && (
-          <div className="absolute inset-0 rounded-2xl highlight-border">
-            <div className="absolute inset-px bg-[#121620] rounded-2xl overflow-hidden z-2">
+          <div className="absolute inset-0 rounded-md highlight-border">
+            <div className="absolute inset-px bg-[#161616] rounded-md overflow-hidden z-2">
               <figure className="relative aspect-video">
                 <div className="skeleton w-full h-full bg-white/5"></div>
               </figure>
@@ -557,7 +562,7 @@ export default function ContentCard({
       <div
         ref={cardRef}
         data-content-id={content!.id}
-        className={`w-full rounded-2xl bg-[#121620] border border-white/[0.07] ${isSelected ? '!ring-2 !ring-primary' : ''}`}
+        className={`w-full rounded-md bg-[#161616] border border-white/[0.07] ${isSelected ? '!ring-2 !ring-primary' : ''}`}
         style={{ height: placeholderHeight! }}
       />
     );
@@ -567,7 +572,7 @@ export default function ContentCard({
     <div
       ref={cardRef}
       data-content-id={content!.id}
-      className={`group relative flex flex-col w-full rounded-2xl overflow-hidden bg-[#121620] border border-white/[0.07] hover:border-white/20 hover:shadow-2xl hover:shadow-black/70 hover:-translate-y-0.5 transition-all duration-200 ${
+      className={`group relative flex flex-col w-full rounded-md overflow-hidden bg-[#161616] border border-white/[0.07] hover:border-white/20 transition-all duration-200 ${
         isSelected ? '!ring-2 !ring-primary border-primary/50' : ''
       } ${isHighlighted ? 'import-pulse' : ''} ${
         isBeingCompressed ? 'cursor-default opacity-75' : 'cursor-pointer'
@@ -587,17 +592,29 @@ export default function ContentCard({
         <img
           ref={thumbnailRef}
           src={thumbnailPath}
-          alt={'thumbnail'}
-          className={`w-full h-full object-cover select-none transition-all duration-300 group-hover:scale-105 ${thumbnailLoaded ? 'opacity-100' : 'opacity-0'}`}
+          alt={content!.title || content!.game || ''}
+          className={`w-full h-full object-cover select-none transition-all duration-300  ${thumbnailLoaded ? 'opacity-100' : 'opacity-0'}`}
           loading="lazy"
           width={1600}
           height={900}
           draggable={false}
           onLoad={markThumbnailLoaded}
-          onError={markThumbnailLoaded}
+          onError={() => {
+            setThumbnailFailed(true);
+            markThumbnailLoaded();
+          }}
         />
 
-        {/* Hover play button overlay - Medal signature */}
+        {thumbnailFailed && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-neutral-900 text-neutral-500">
+            <ImageOff size={28} />
+            <span className="text-xs">
+              {language === 'pt-PT' ? 'Pré-visualização indisponível' : 'Preview unavailable'}
+            </span>
+          </div>
+        )}
+
+        {/* Playback affordance */}
         <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
           <div className="w-11 h-11 rounded-full bg-black/75 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-2xl scale-90 group-hover:scale-100 transition-transform duration-200">
             <Play size={18} fill="#fecb00" className="ml-0.5 text-primary" />
@@ -688,7 +705,14 @@ export default function ContentCard({
               placeholder={content!.game || 'Untitled'}
             />
           ) : (
-            <h2 className="text-sm font-semibold truncate text-white/95 group-hover:text-primary transition-colors">
+            <h2
+              title={
+                content!.bookmarks?.some((b) => b.weaponIsInferred)
+                  ? `${content!.title} — ${language === 'pt-PT' ? '? = arma provável, inferida pelos disparos; pode diferir num abate de granada.' : '? = probable weapon, inferred from shots; grenade kills may differ.'}`
+                  : content!.title || content!.game
+              }
+              className="text-base font-bold truncate text-white/95"
+            >
               {content!.title || content!.game || 'Untitled'}
             </h2>
           )}
@@ -708,51 +732,102 @@ export default function ContentCard({
           </button>
         </div>
 
-        <div className="text-xs text-gray-400 flex items-center justify-between w-full min-w-0">
-          <div className="flex items-center gap-1.5 truncate">
-            {content!.game && (
-              <span className="bg-white/[0.06] text-gray-300 font-medium px-1.5 py-0.5 rounded text-[11px] truncate max-w-[130px]">
-                {content!.game}
-              </span>
-            )}
-            <span className="text-gray-600">&bull;</span>
-            <span className="truncate">{new Date(content!.createdAt).toLocaleDateString()}</span>
-            <span className="text-gray-600">&bull;</span>
-            <span className="shrink-0">{content!.fileSize}</span>
-          </div>
-          {!airplaneMode && uploadUrl && (
-            <div className="flex items-center gap-0.5 shrink-0 pl-1">
-              <span
-                className="btn btn-ghost btn-xs btn-circle hover:bg-white/10 active:bg-white/10 text-gray-400 hover:text-white"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigator.clipboard.writeText(uploadUrl);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                }}
-              >
-                <MorphIcon icon={copied ? Check : Link} size={15} spring="snappy" />
-              </span>
-              <span
-                className="btn btn-ghost btn-xs btn-circle hover:bg-white/10 active:bg-white/10 text-gray-400 hover:text-white"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  sendMessageToBackend('OpenInBrowser', {
-                    Url: uploadUrl,
-                  });
-                }}
-              >
-                <ExternalLink size={15} />
-              </span>
-            </div>
+        <div className="text-xs text-neutral-400 flex flex-wrap items-center gap-1.5 min-w-0">
+          <span
+            className="rounded-sm bg-indigo-900 text-indigo-200 px-1 text-[9px] font-bold"
+            title={content!.game}
+          >
+            {content!.game === 'Counter-Strike 2' ? 'cs₂' : content!.game}
+          </span>
+          <span>•</span>
+          <Monitor size={13} aria-hidden="true" />
+          <span>{language === 'pt-PT' ? 'No dispositivo' : 'On Device'}</span>
+          <span>•</span>
+          <span>{content!.fileSize}</span>
+          <span>•</span>
+          {type === 'Clip' || type === 'Highlight' ? (
+            <Scissors size={13} className="text-lime-400" />
+          ) : (
+            <Zap size={13} className="text-cyan-400" />
           )}
+          <span>
+            {new Date(content!.createdAt).toLocaleDateString(
+              language === 'pt-PT' ? 'pt-PT' : 'en-US',
+              { month: 'short', day: 'numeric' },
+            )}
+          </span>
         </div>
+      </div>
+      <div className="flex items-center justify-between bg-[#212121] px-3 py-3 text-neutral-100">
+        <button
+          type="button"
+          disabled={!uploadUrl}
+          title={
+            !uploadUrl
+              ? language === 'pt-PT'
+                ? 'Envia o clipe para obter um link'
+                : 'Upload the clip to get a link'
+              : undefined
+          }
+          className="flex min-w-0 items-center gap-2 text-sm cursor-pointer disabled:cursor-default disabled:text-neutral-500"
+          onClick={async (event) => {
+            event.stopPropagation();
+            if (!uploadUrl) return;
+            try {
+              await navigator.clipboard.writeText(uploadUrl);
+              setCopied(true);
+              setCopyError(false);
+              setTimeout(() => setCopied(false), 1500);
+            } catch {
+              setCopyError(true);
+            }
+          }}
+        >
+          <Copy size={20} />
+          <span role="status">
+            {copyError
+              ? language === 'pt-PT'
+                ? 'Não foi possível copiar'
+                : 'Could not copy'
+              : copied
+                ? language === 'pt-PT'
+                  ? 'Copiado!'
+                  : 'Copied!'
+                : 'Copy Link'}
+          </span>
+        </button>
+        {!airplaneMode && (type === 'Clip' || type === 'Highlight') && (
+          <button
+            type="button"
+            className="p-1 cursor-pointer hover:text-white text-neutral-300"
+            aria-label={t('common.upload')}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleUpload();
+            }}
+          >
+            <CloudUpload size={20} />
+          </button>
+        )}
+        {uploadUrl && (
+          <button
+            type="button"
+            className="p-1 cursor-pointer text-neutral-300 hover:text-white"
+            aria-label={language === 'pt-PT' ? 'Abrir link' : 'Open link'}
+            onClick={(event) => {
+              event.stopPropagation();
+              sendMessageToBackend('OpenInBrowser', { Url: uploadUrl });
+            }}
+          >
+            <ExternalLink size={18} />
+          </button>
+        )}
       </div>
 
       {contextMenuPosition &&
         createPortal(
           <ul
-            className="menu fixed z-[1000] w-52 rounded-xl border border-white/[0.09] bg-[#121620] p-1.5 shadow-2xl"
+            className="menu fixed z-[1000] w-52 rounded-xl border border-white/[0.09] bg-[#161616] p-1.5 shadow-2xl"
             style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
             onClick={(event) => event.stopPropagation()}
             onContextMenu={(event) => {
